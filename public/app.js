@@ -1,0 +1,378 @@
+// Golden Bluff - client. Plain JS, no build step, no frameworks.
+const CHARACTERS = {
+  ROYAL:     { name: 'Royal',     emoji: '👑', needsTarget: false, desc: 'Gain 2 Golden Tickets.' },
+  THIEF:     { name: 'Thief',     emoji: '🦹', needsTarget: true,  desc: 'Steal up to 2 Tickets from another player.' },
+  GUARD:     { name: 'Guard',     emoji: '🛡️', needsTarget: false, desc: 'Block the next ability targeting you, until your next turn.' },
+  SEER:      { name: 'Seer',      emoji: '🔮', needsTarget: true,  desc: "Secretly see one of another player's cards." },
+  TRICKSTER: { name: 'Trickster', emoji: '🎭', needsTarget: false, desc: 'Swap one of your cards for a new secret one.' },
+  ASSASSIN:  { name: 'Assassin',  emoji: '☠️', needsTarget: true,  desc: 'Pay 2 Tickets to force a discard.' },
+};
+
+const socket = io();
+const el = (id) => document.getElementById(id);
+
+const S = {
+  screen: 'auth',       // auth | lobby | game
+  myId: null,
+  myName: '',
+  code: null,
+  pub: null,            // last public state from server
+  hand: [],
+  chat: [],
+  selectedCharacter: null,
+  selectedTarget: null,
+  seerToast: null,
+};
+
+function showError(msg) {
+  el('auth-error').textContent = msg || '';
+  if (msg) setTimeout(() => { if (el('auth-error').textContent === msg) el('auth-error').textContent = ''; }, 4000);
+}
+
+// ---------- Socket wiring ----------
+socket.on('connect', () => { S.myId = socket.id; });
+
+socket.on('state', (pub) => {
+  S.pub = pub;
+  if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
+  render();
+});
+
+socket.on('hand', (data) => { S.hand = data.hand || []; render(); });
+
+socket.on('seerReveal', (data) => {
+  S.seerToast = data;
+  render();
+});
+
+socket.on('chatMessage', (msg) => {
+  S.chat.push(msg);
+  if (S.chat.length > 100) S.chat.shift();
+  renderChat();
+});
+
+// ---------- Auth screen ----------
+el('create-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = el('create-name').value.trim();
+  if (!name) return showError('Enter your name.');
+  socket.emit('createRoom', { name }, (res) => {
+    if (!res.ok) return showError(res.error);
+    S.myName = name; S.code = res.code; S.myId = res.playerId;
+    S.screen = 'lobby';
+    render();
+  });
+});
+
+el('join-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = el('join-name').value.trim();
+  const code = el('join-code').value.trim();
+  if (!name || !code) return showError('Enter your name and the room code.');
+  socket.emit('joinRoom', { name, code }, (res) => {
+    if (!res.ok) return showError(res.error);
+    S.myName = name; S.code = res.code; S.myId = res.playerId;
+    S.screen = 'lobby';
+    render();
+  });
+});
+
+el('start-game-btn').addEventListener('click', () => {
+  socket.emit('startGame', {}, (res) => { if (!res.ok) alert(res.error); });
+});
+
+el('chat-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = el('chat-input');
+  const message = input.value.trim();
+  if (!message) return;
+  socket.emit('announce', { message });
+  input.value = '';
+});
+
+el('seer-toast-close').addEventListener('click', () => { S.seerToast = null; render(); });
+
+// ---------- Render ----------
+function render() {
+  el('screen-auth').classList.toggle('hidden', S.screen !== 'auth');
+  el('screen-lobby').classList.toggle('hidden', S.screen !== 'lobby');
+  el('screen-game').classList.toggle('hidden', S.screen !== 'game');
+
+  if (S.screen === 'lobby') renderLobby();
+  if (S.screen === 'game') renderGame();
+  renderSeerToast();
+}
+
+function renderLobby() {
+  const pub = S.pub;
+  el('lobby-code').textContent = S.code || (pub && pub.code) || '';
+  const list = el('lobby-players');
+  list.innerHTML = '';
+  if (pub) {
+    pub.players.forEach((p) => {
+      const li = document.createElement('li');
+      li.textContent = p.name + (p.id === pub.hostId ? '  👑 host' : '') + (p.id === S.myId ? '  (you)' : '');
+      list.appendChild(li);
+    });
+  }
+  const isHost = pub && pub.hostId === S.myId;
+  const count = pub ? pub.players.length : 0;
+  el('start-game-btn').classList.toggle('hidden', !isHost);
+  el('start-game-btn').disabled = count < 3 || count > 6;
+  el('lobby-hint').textContent = isHost
+    ? (count < 3 ? `Need at least 3 players (currently ${count}).` : `Ready to start with ${count} players.`)
+    : 'Waiting for the host to start the game...';
+}
+
+function playerById(id) { return S.pub ? S.pub.players.find((p) => p.id === id) : null; }
+
+function renderGame() {
+  const pub = S.pub;
+  if (!pub) return;
+  el('game-code').textContent = pub.code;
+
+  // Players grid
+  const grid = el('players-grid');
+  grid.innerHTML = '';
+  pub.players.forEach((p) => {
+    const card = document.createElement('div');
+    card.className = 'player-card';
+    if (p.id === pub.activePlayerId) card.classList.add('is-turn');
+    if (p.id === S.myId) card.classList.add('is-me');
+    if (!p.alive) card.classList.add('is-dead');
+    card.innerHTML = `
+      <div class="p-name">${p.name}${p.id === S.myId ? ' <span class="badge">you</span>' : ''}${p.id === pub.activePlayerId ? ' <span class="badge">turn</span>' : ''}${p.protected ? ' 🛡️' : ''}${!p.connected ? ' <span class="badge">offline</span>' : ''}</div>
+      <div class="p-tickets">🎟️ ${p.tickets}</div>
+      <div class="p-cards">${p.alive ? '❤️'.repeat(p.cardCount) : '💀 eliminated'}</div>
+    `;
+    grid.appendChild(card);
+  });
+
+  // My hand
+  const handDiv = el('my-hand');
+  handDiv.innerHTML = '';
+  S.hand.forEach((c) => {
+    const meta = CHARACTERS[c];
+    const div = document.createElement('div');
+    div.className = 'hand-card';
+    div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+    handDiv.appendChild(div);
+  });
+
+  renderActionArea(pub);
+  renderLog(pub);
+  renderChat();
+
+  if (pub.phase === 'gameover') {
+    const winner = playerById(pub.winnerId);
+    el('winner-banner').classList.remove('hidden');
+    el('winner-banner').innerHTML = `<h2>🏆 ${winner ? winner.name : 'Someone'} wins!</h2><p>${winner ? winner.tickets : '10+'} Golden Tickets. Refresh the page to start a new room.</p>`;
+  } else {
+    el('winner-banner').classList.add('hidden');
+  }
+}
+
+function renderActionArea(pub) {
+  const area = el('action-area');
+  area.innerHTML = '';
+  const isMyTurn = pub.activePlayerId === S.myId;
+
+  if (pub.phase === 'claim') {
+    if (isMyTurn) {
+      area.appendChild(buildClaimUI(pub));
+    } else {
+      area.innerHTML = `<div class="action-banner">Waiting for ${nameOf(pub, pub.activePlayerId)} to make a claim...</div>`;
+    }
+    return;
+  }
+
+  if (pub.phase === 'challengeWindow') {
+    const c = pub.pendingClaim;
+    const meta = CHARACTERS[c.character];
+    const targetTxt = c.targetId ? ` targeting ${nameOf(pub, c.targetId)}` : '';
+    const banner = document.createElement('div');
+    banner.className = 'action-banner';
+    banner.textContent = `${nameOf(pub, c.claimantId)} claims ${meta.emoji} ${meta.name}${targetTxt}.`;
+    area.appendChild(banner);
+
+    if (c.claimantId === S.myId) {
+      const p = document.createElement('div');
+      p.textContent = 'Waiting to see if anyone challenges...';
+      area.appendChild(p);
+    } else if (!c.eligible.includes(S.myId)) {
+      area.appendChild(document.createTextNode('You are out of this round.'));
+    } else if (c.passed.includes(S.myId)) {
+      area.appendChild(document.createTextNode("You passed. Waiting for others..."));
+    } else {
+      const row = document.createElement('div');
+      row.className = 'pending-actions';
+      const challengeBtn = document.createElement('button');
+      challengeBtn.className = 'danger';
+      challengeBtn.textContent = 'CHALLENGE!';
+      challengeBtn.onclick = () => socket.emit('challenge', {}, (res) => { if (!res.ok) alert(res.error); });
+      const passBtn = document.createElement('button');
+      passBtn.textContent = 'Pass';
+      passBtn.onclick = () => socket.emit('pass', {}, (res) => { if (!res.ok) alert(res.error); });
+      row.appendChild(challengeBtn);
+      row.appendChild(passBtn);
+      area.appendChild(row);
+    }
+    return;
+  }
+
+  if (pub.phase === 'awaitingDiscard') {
+    const d = pub.pendingDiscard;
+    const reasonText = {
+      lied: 'You were caught bluffing! Choose a Character to discard.',
+      lostChallenge: 'Your challenge was wrong! Choose a Character to discard.',
+      assassinated: 'You were targeted by the Assassin! Choose a Character to discard.',
+    }[d.reason] || 'Choose a Character to discard.';
+
+    if (d.playerId === S.myId) {
+      const banner = document.createElement('div');
+      banner.className = 'action-banner';
+      banner.textContent = reasonText;
+      area.appendChild(banner);
+      const row = document.createElement('div');
+      row.className = 'hand-cards';
+      S.hand.forEach((c, idx) => {
+        const meta = CHARACTERS[c];
+        const div = document.createElement('div');
+        div.className = 'hand-card clickable';
+        div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+        div.onclick = () => socket.emit('resolveDiscard', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
+        row.appendChild(div);
+      });
+      area.appendChild(row);
+    } else {
+      area.innerHTML = `<div class="action-banner">Waiting for ${nameOf(pub, d.playerId)} to choose a card to discard...</div>`;
+    }
+    return;
+  }
+
+  if (pub.phase === 'awaitingTrickster') {
+    const t = pub.pendingTrickster;
+    if (t.claimantId === S.myId) {
+      const banner = document.createElement('div');
+      banner.className = 'action-banner';
+      banner.textContent = 'Choose which card to swap for a new secret one.';
+      area.appendChild(banner);
+      const row = document.createElement('div');
+      row.className = 'hand-cards';
+      S.hand.forEach((c, idx) => {
+        const meta = CHARACTERS[c];
+        const div = document.createElement('div');
+        div.className = 'hand-card clickable';
+        div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+        div.onclick = () => socket.emit('resolveTrickster', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
+        row.appendChild(div);
+      });
+      area.appendChild(row);
+    } else {
+      area.innerHTML = `<div class="action-banner">Waiting for ${nameOf(pub, t.claimantId)} to choose a card to swap...</div>`;
+    }
+    return;
+  }
+
+  if (pub.phase === 'gameover') {
+    area.innerHTML = '';
+  }
+}
+
+function buildClaimUI(pub) {
+  const wrap = document.createElement('div');
+  const banner = document.createElement('div');
+  banner.className = 'action-banner';
+  banner.textContent = 'Your turn — choose a Character to claim (you may bluff):';
+  wrap.appendChild(banner);
+
+  const grid = document.createElement('div');
+  grid.className = 'char-grid';
+  Object.entries(CHARACTERS).forEach(([key, meta]) => {
+    const btn = document.createElement('button');
+    btn.className = 'char-btn' + (S.selectedCharacter === key ? ' selected' : '');
+    btn.innerHTML = `<span class="c-title">${meta.emoji} ${meta.name}</span><span class="c-desc">${meta.desc}</span>`;
+    btn.onclick = () => { S.selectedCharacter = key; S.selectedTarget = null; render(); };
+    grid.appendChild(btn);
+  });
+  wrap.appendChild(grid);
+
+  const me = playerById(S.myId);
+  if (S.selectedCharacter) {
+    const meta = CHARACTERS[S.selectedCharacter];
+    if (meta.needsTarget) {
+      const targetsDiv = document.createElement('div');
+      targetsDiv.className = 'target-list';
+      pub.players.filter((p) => p.alive && p.id !== S.myId).forEach((p) => {
+        const disabled = S.selectedCharacter === 'THIEF' && p.tickets <= 0;
+        const btn = document.createElement('button');
+        btn.textContent = `${p.name} (🎟️${p.tickets})` + (disabled ? ' — no tickets' : '');
+        btn.disabled = disabled;
+        if (S.selectedTarget === p.id) btn.classList.add('primary');
+        btn.onclick = () => { S.selectedTarget = p.id; render(); };
+        targetsDiv.appendChild(btn);
+      });
+      wrap.appendChild(targetsDiv);
+    }
+
+    const needsTicketWarning = S.selectedCharacter === 'ASSASSIN' && me && me.tickets < 2;
+    if (needsTicketWarning) {
+      const warn = document.createElement('div');
+      warn.className = 'error-msg';
+      warn.textContent = 'You need at least 2 Golden Tickets to attempt this claim.';
+      wrap.appendChild(warn);
+    }
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'primary';
+    confirmBtn.textContent = `Claim ${meta.emoji} ${meta.name}`;
+    confirmBtn.disabled = (meta.needsTarget && !S.selectedTarget) || needsTicketWarning;
+    confirmBtn.onclick = () => {
+      socket.emit('makeClaim', { character: S.selectedCharacter, targetId: S.selectedTarget }, (res) => {
+        if (!res.ok) { alert(res.error); return; }
+        S.selectedCharacter = null; S.selectedTarget = null;
+      });
+    };
+    wrap.appendChild(confirmBtn);
+  }
+
+  return wrap;
+}
+
+function renderLog(pub) {
+  const logDiv = el('game-log');
+  logDiv.innerHTML = '';
+  pub.log.slice().reverse().forEach((entry) => {
+    const line = document.createElement('div');
+    line.textContent = entry.text;
+    logDiv.appendChild(line);
+  });
+}
+
+function renderChat() {
+  const chatDiv = el('chat-log');
+  chatDiv.innerHTML = '';
+  S.chat.slice().reverse().forEach((msg) => {
+    const line = document.createElement('div');
+    line.className = 'chat-line';
+    line.innerHTML = `<b>${msg.name}:</b> ${escapeHtml(msg.message)}`;
+    chatDiv.appendChild(line);
+  });
+}
+
+function renderSeerToast() {
+  const toast = el('seer-toast');
+  if (!S.seerToast) { toast.classList.add('hidden'); return; }
+  toast.classList.remove('hidden');
+  el('seer-toast-body').textContent = `${S.seerToast.targetName} is secretly holding: ${S.seerToast.emoji} ${S.seerToast.characterName}`;
+}
+
+function nameOf(pub, id) {
+  const p = pub.players.find((pl) => pl.id === id);
+  return p ? p.name : 'someone';
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+render();

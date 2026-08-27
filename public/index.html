@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Golden Bluff</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- AUTH SCREEN -->
+  <div id="screen-auth" class="center-screen">
+    <div class="title">🎟️ Golden Bluff</div>
+    <div class="subtitle">Claim it. Bluff it. Get away with it — or don't.</div>
+    <div class="card-box">
+      <h2>Create a Room</h2>
+      <form id="create-form">
+        <div class="field-row">
+          <label for="create-name">Your name</label>
+          <input type="text" id="create-name" maxlength="20" placeholder="Aki" required>
+        </div>
+        <button type="submit" class="primary">Create Room</button>
+      </form>
+      <div class="or-divider">— or —</div>
+      <h2>Join a Room</h2>
+      <form id="join-form">
+        <div class="field-row">
+          <label for="join-name">Your name</label>
+          <input type="text" id="join-name" maxlength="20" placeholder="Your name" required>
+        </div>
+        <div class="field-row">
+          <label for="join-code">Room code</label>
+          <input type="text" id="join-code" maxlength="4" placeholder="ABCD" style="text-transform:uppercase" required>
+        </div>
+        <button type="submit">Join Room</button>
+      </form>
+      <div class="error-msg" id="auth-error"></div>
+    </div>
+  </div>
+
+  <!-- LOBBY SCREEN -->
+  <div id="screen-lobby" class="center-screen hidden">
+    <div class="title">Waiting Room</div>
+    <div class="card-box">
+      <p>Share this code with other players:</p>
+      <div class="room-code-display" id="lobby-code">----</div>
+      <h3>Players</h3>
+      <ul class="player-list" id="lobby-players"></ul>
+      <p id="lobby-hint" class="subtitle"></p>
+      <button id="start-game-btn" class="primary hidden">Start Game</button>
+    </div>
+  </div>
+
+  <!-- GAME SCREEN -->
+  <div id="screen-game" class="hidden">
+    <div class="game-header">
+      <h2>🎟️ Golden Bluff</h2>
+      <span class="code-pill">Room <span id="game-code"></span></span>
+    </div>
+
+    <div id="winner-banner" class="winner-banner hidden"></div>
+
+    <div class="players-grid" id="players-grid"></div>
+
+    <div class="panel">
+      <h3>Your Characters</h3>
+      <div class="hand-cards" id="my-hand"></div>
+    </div>
+
+    <div class="panel" id="action-area"></div>
+
+    <div class="panel">
+      <h3>Activity Log</h3>
+      <div class="log-panel" id="game-log"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Table Talk</h3>
+      <div class="chat-panel" id="chat-log"></div>
+      <form id="chat-form" class="chat-input-row">
+        <input type="text" id="chat-input" maxlength="200" placeholder="Say something (bluff freely)...">
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- SEER PRIVATE REVEAL TOAST -->
+  <div id="seer-toast" class="toast hidden">
+    <h4>🔮 Seer — Private Info</h4>
+    <div id="seer-toast-body"></div>
+    <button id="seer-toast-close" class="toast-close">Got it</button>
+  </div>
+
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
