@@ -7,9 +7,11 @@ const CHARACTERS = {
   TRICKSTER: { name: 'Trickster', emoji: '🎭', needsTarget: false, desc: 'Swap one of your cards for a new secret one.' },
   ASSASSIN:  { name: 'Assassin',  emoji: '☠️', needsTarget: true,  desc: 'Pay 2 Tickets to force a discard.' },
 };
+const CONFETTI_COLORS = ['#c9a227', '#e8c14a', '#8a5fd1', '#4fa3c7', '#e05fa0', '#d4544a', '#6fd67f'];
 
 const socket = io();
 const el = (id) => document.getElementById(id);
+const charClass = (key) => `char-${key}`;
 
 const S = {
   screen: 'auth',       // auth | lobby | game
@@ -17,11 +19,15 @@ const S = {
   myName: '',
   code: null,
   pub: null,            // last public state from server
+  prevPub: null,        // previous public state, for diffing (tickets, eliminations, challenges)
   hand: [],
+  prevHand: [],
   chat: [],
   selectedCharacter: null,
   selectedTarget: null,
   seerToast: null,
+  confettiSpawned: false,
+  lastFlashSig: null,
 };
 
 function showError(msg) {
@@ -33,8 +39,11 @@ function showError(msg) {
 socket.on('connect', () => { S.myId = socket.id; });
 
 socket.on('state', (pub) => {
+  maybeFlashChallenge(S.pub, pub);
+  S.prevPub = S.pub;
   S.pub = pub;
   if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
+  if (pub.phase !== 'gameover') S.confettiSpawned = false;
   render();
 });
 
@@ -92,6 +101,52 @@ el('chat-form').addEventListener('submit', (e) => {
 
 el('seer-toast-close').addEventListener('click', () => { S.seerToast = null; render(); });
 
+// ---------- Effects layer (survives normal re-renders) ----------
+function fxLayer() { return el('fx-layer'); }
+
+function maybeFlashChallenge(prevPub, pub) {
+  const c = pub && pub.pendingClaim;
+  if (!c || c.status !== 'challenged') return;
+  const sig = JSON.stringify({ a: c.claimantId, b: c.character, t: c.targetId, ch: c.challengerId });
+  if (sig === S.lastFlashSig) return;
+  S.lastFlashSig = sig;
+  spawnChallengeFlash(pub, c);
+}
+
+function spawnChallengeFlash(pub, c) {
+  const claimant = pub.players.find((p) => p.id === c.claimantId);
+  const challenger = pub.players.find((p) => p.id === c.challengerId);
+  const meta = CHARACTERS[c.character];
+  const div = document.createElement('div');
+  div.className = `challenge-flash ${charClass(c.character)}`;
+  div.innerHTML = `
+    <div class="cf-title">⚔️ CHALLENGE!</div>
+    <div class="cf-sub">${challenger ? challenger.name : 'Someone'} challenges ${claimant ? claimant.name : 'someone'}'s ${meta.emoji} ${meta.name} claim!</div>
+  `;
+  fxLayer().appendChild(div);
+  setTimeout(() => div.remove(), 1600);
+}
+
+function spawnConfetti() {
+  const layer = fxLayer();
+  const count = 70;
+  for (let i = 0; i < count; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    const left = Math.random() * 100;
+    const delay = Math.random() * 0.6;
+    const duration = 2.2 + Math.random() * 1.4;
+    const color = CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)];
+    piece.style.left = left + 'vw';
+    piece.style.background = color;
+    piece.style.animationDelay = delay + 's';
+    piece.style.animationDuration = duration + 's';
+    piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+    layer.appendChild(piece);
+    setTimeout(() => piece.remove(), (delay + duration) * 1000 + 200);
+  }
+}
+
 // ---------- Render ----------
 function render() {
   el('screen-auth').classList.toggle('hidden', S.screen !== 'auth');
@@ -109,8 +164,9 @@ function renderLobby() {
   const list = el('lobby-players');
   list.innerHTML = '';
   if (pub) {
-    pub.players.forEach((p) => {
+    pub.players.forEach((p, i) => {
       const li = document.createElement('li');
+      li.style.animationDelay = (i * 0.06) + 's';
       li.textContent = p.name + (p.id === pub.hostId ? '  👑 host' : '') + (p.id === S.myId ? '  (you)' : '');
       list.appendChild(li);
     });
@@ -125,6 +181,7 @@ function renderLobby() {
 }
 
 function playerById(id) { return S.pub ? S.pub.players.find((p) => p.id === id) : null; }
+function prevPlayerById(id) { return S.prevPub ? S.prevPub.players.find((p) => p.id === id) : null; }
 
 function renderGame() {
   const pub = S.pub;
@@ -135,30 +192,31 @@ function renderGame() {
   const grid = el('players-grid');
   grid.innerHTML = '';
   pub.players.forEach((p) => {
+    const prev = prevPlayerById(p.id);
+    const delta = prev ? p.tickets - prev.tickets : 0;
+    const justEliminated = prev && prev.alive && !p.alive;
+
     const card = document.createElement('div');
     card.className = 'player-card';
     if (p.id === pub.activePlayerId) card.classList.add('is-turn');
     if (p.id === S.myId) card.classList.add('is-me');
     if (!p.alive) card.classList.add('is-dead');
+    if (justEliminated) card.classList.add('just-eliminated');
+
+    const pulseClass = delta > 0 ? 'pulse-gain' : (delta < 0 ? 'pulse-loss' : '');
+    const deltaHtml = delta !== 0
+      ? `<span class="ticket-delta ${delta > 0 ? 'gain' : 'loss'}">${delta > 0 ? '+' : ''}${delta}</span>`
+      : '';
+
     card.innerHTML = `
       <div class="p-name">${p.name}${p.id === S.myId ? ' <span class="badge">you</span>' : ''}${p.id === pub.activePlayerId ? ' <span class="badge">turn</span>' : ''}${p.protected ? ' 🛡️' : ''}${!p.connected ? ' <span class="badge">offline</span>' : ''}</div>
-      <div class="p-tickets">🎟️ ${p.tickets}</div>
+      <div class="p-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</div>
       <div class="p-cards">${p.alive ? '❤️'.repeat(p.cardCount) : '💀 eliminated'}</div>
     `;
     grid.appendChild(card);
   });
 
-  // My hand
-  const handDiv = el('my-hand');
-  handDiv.innerHTML = '';
-  S.hand.forEach((c) => {
-    const meta = CHARACTERS[c];
-    const div = document.createElement('div');
-    div.className = 'hand-card';
-    div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
-    handDiv.appendChild(div);
-  });
-
+  renderMyHand();
   renderActionArea(pub);
   renderLog(pub);
   renderChat();
@@ -166,15 +224,47 @@ function renderGame() {
   if (pub.phase === 'gameover') {
     const winner = playerById(pub.winnerId);
     el('winner-banner').classList.remove('hidden');
-    el('winner-banner').innerHTML = `<h2>🏆 ${winner ? winner.name : 'Someone'} wins!</h2><p>${winner ? winner.tickets : '10+'} Golden Tickets. Refresh the page to start a new room.</p>`;
+    el('winner-banner').innerHTML = `
+      <span class="trophy">🏆</span>
+      <h2>${winner ? winner.name : 'Someone'} WINS!</h2>
+      <p>${winner ? winner.tickets : '10+'} Golden Tickets. Refresh the page to start a new room.</p>
+    `;
+    if (!S.confettiSpawned) { spawnConfetti(); S.confettiSpawned = true; }
   } else {
     el('winner-banner').classList.add('hidden');
   }
 }
 
+function renderMyHand() {
+  const handDiv = el('my-hand');
+  handDiv.innerHTML = '';
+  const isInitialDeal = S.prevHand.length === 0 && S.hand.length > 0;
+
+  S.hand.forEach((c, idx) => {
+    const meta = CHARACTERS[c];
+    const div = document.createElement('div');
+    div.className = `hand-card ${charClass(c)}`;
+    if (isInitialDeal) {
+      div.classList.add('deal-in');
+      div.style.animationDelay = (idx * 0.15) + 's';
+    } else if (S.prevHand[idx] && S.prevHand[idx] !== c) {
+      div.classList.add('flip-swap');
+    }
+    div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+    handDiv.appendChild(div);
+  });
+
+  S.prevHand = S.hand.slice();
+}
+
 function renderActionArea(pub) {
   const area = el('action-area');
   area.innerHTML = '';
+  area.classList.remove('action-fade');
+  // Force reflow so the fade-in animation replays every time content changes.
+  void area.offsetWidth;
+  area.classList.add('action-fade');
+
   const isMyTurn = pub.activePlayerId === S.myId;
 
   if (pub.phase === 'claim') {
@@ -191,8 +281,8 @@ function renderActionArea(pub) {
     const meta = CHARACTERS[c.character];
     const targetTxt = c.targetId ? ` targeting ${nameOf(pub, c.targetId)}` : '';
     const banner = document.createElement('div');
-    banner.className = 'action-banner';
-    banner.textContent = `${nameOf(pub, c.claimantId)} claims ${meta.emoji} ${meta.name}${targetTxt}.`;
+    banner.className = `action-banner ${charClass(c.character)}`;
+    banner.innerHTML = `${nameOf(pub, c.claimantId)} claims <b style="color:var(--char-a)">${meta.emoji} ${meta.name}</b>${targetTxt}.`;
     area.appendChild(banner);
 
     if (c.claimantId === S.myId) {
@@ -238,7 +328,7 @@ function renderActionArea(pub) {
       S.hand.forEach((c, idx) => {
         const meta = CHARACTERS[c];
         const div = document.createElement('div');
-        div.className = 'hand-card clickable';
+        div.className = `hand-card clickable ${charClass(c)}`;
         div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
         div.onclick = () => socket.emit('resolveDiscard', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
         row.appendChild(div);
@@ -262,7 +352,7 @@ function renderActionArea(pub) {
       S.hand.forEach((c, idx) => {
         const meta = CHARACTERS[c];
         const div = document.createElement('div');
-        div.className = 'hand-card clickable';
+        div.className = `hand-card clickable ${charClass(c)}`;
         div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
         div.onclick = () => socket.emit('resolveTrickster', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
         row.appendChild(div);
@@ -290,7 +380,7 @@ function buildClaimUI(pub) {
   grid.className = 'char-grid';
   Object.entries(CHARACTERS).forEach(([key, meta]) => {
     const btn = document.createElement('button');
-    btn.className = 'char-btn' + (S.selectedCharacter === key ? ' selected' : '');
+    btn.className = `char-btn ${charClass(key)}` + (S.selectedCharacter === key ? ' selected' : '');
     btn.innerHTML = `<span class="c-title">${meta.emoji} ${meta.name}</span><span class="c-desc">${meta.desc}</span>`;
     btn.onclick = () => { S.selectedCharacter = key; S.selectedTarget = null; render(); };
     grid.appendChild(btn);
