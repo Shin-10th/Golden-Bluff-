@@ -27,6 +27,26 @@ return → shuffle → draw cycle, Guard blocking, eliminations, and both win co
 (via Stable Income or via a Character claim). There's also a "Table Talk" chat box for
 bluffing out loud, and a private popup for the Seer's peek.
 
+## Deploying so anyone can join (real internet, not just wifi)
+
+One-time setup:
+1. Create an empty repo on GitHub (github.com/new) — don't add a README/gitignore there, this project already has them.
+2. In a terminal in this folder:
+   ```
+   git remote add origin https://github.com/<your-username>/<repo-name>.git
+   git push -u origin main
+   ```
+3. Go to render.com, sign in with GitHub, click New + → Web Service, pick this repo.
+4. Settings: Build Command `npm install`, Start Command `npm start`, Instance Type: Free. Create Web Service.
+5. Render gives you a public URL like `https://<something>.onrender.com` — that's the link to share with anyone, anywhere.
+
+Note: on the free tier, the server falls asleep after 15 minutes with no players connected, and
+takes about a minute to wake back up when the next person opens the link. Open it a minute before
+you actually want to start playing.
+
+Shipping an update later: after I change files here, run
+`git add -A && git commit -m "..." && git push` in this folder — Render redeploys automatically.
+
 ## Rules judgment calls (the original rules didn't fully specify these)
 
 - **Assassin needs 2+ tickets to even claim it** (bluff or not) — otherwise you could
