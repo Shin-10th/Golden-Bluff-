@@ -14,11 +14,16 @@
 body {
   margin: 0;
   font-family: 'Georgia', 'Segoe UI', system-ui, sans-serif;
-  background: radial-gradient(ellipse at top, #241c14, #16110c 70%);
+  background:
+    radial-gradient(ellipse at top, rgba(255,255,255,0.04), transparent 60%),
+    repeating-linear-gradient(90deg, rgba(0,0,0,0.10) 0px, transparent 2px, transparent 38px, rgba(0,0,0,0.10) 40px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, transparent 1px, transparent 3px),
+    linear-gradient(160deg, #2b2013, #1a130c 55%, #120d08);
   color: var(--text);
   min-height: 100vh;
   overflow-x: hidden;
 }
+.title, .game-header h2, h1, h2, h3 { font-family: 'Cinzel', 'Georgia', serif; letter-spacing: 0.02em; }
 .hidden { display: none !important; }
 button {
   font-family: inherit;
@@ -106,27 +111,46 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .ticket-delta.gain { color: #6fd67f; text-shadow: 0 0 6px rgba(111,214,127,0.7); }
 .ticket-delta.loss { color: #e07a70; text-shadow: 0 0 6px rgba(224,122,112,0.7); }
 
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+.panel {
+  background:
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.015) 0px, transparent 1px, transparent 4px),
+    var(--panel);
+  border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1rem;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 12px rgba(0,0,0,0.25);
+}
 .hand-cards { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 .hand-card {
-  background: var(--panel-2); border: 2px solid var(--char-a, var(--gold)); border-left-width: 7px;
+  background:
+    radial-gradient(ellipse at top, rgba(255,255,255,0.05), transparent 65%),
+    var(--panel-2);
+  border: 2px solid var(--char-a, var(--gold)); border-left-width: 7px;
   border-radius: 10px; padding: 0.8rem 1rem; min-width: 110px; text-align: center;
-  transform-style: preserve-3d;
+  transform-style: preserve-3d; position: relative;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06), 0 4px 10px rgba(0,0,0,0.35);
+}
+.hand-card::before {
+  content: ''; position: absolute; inset: 4px; border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px; pointer-events: none;
 }
 .hand-card.clickable { cursor: pointer; }
 .hand-card.clickable:hover { background: var(--gold); color: #1a1410; }
 .hand-card.clickable:hover .c-name { color: #1a1410; }
-.hand-card .c-emoji { font-size: 1.8rem; text-shadow: 0 0 10px var(--char-glow, rgba(201,162,39,0.5)); }
-.hand-card .c-name { font-weight: bold; color: var(--char-a, var(--gold-bright)); }
+.hand-card .c-icon { width: 42px; height: 42px; margin: 0 auto 0.35rem; color: var(--char-a, var(--gold)); filter: drop-shadow(0 0 8px var(--char-glow, rgba(201,162,39,0.5))); }
+.hand-card .c-icon svg { width: 100%; height: 100%; display: block; }
+.hand-card .c-name { font-family: 'Cinzel', serif; font-weight: 600; color: var(--char-a, var(--gold-bright)); letter-spacing: 0.02em; }
 .hand-card.deal-in { animation: dealIn 0.5s ease both; }
 .hand-card.flip-swap { animation: flipCard 0.6s ease; }
+
+.c-icon-inline { display: inline-flex; width: 1.3em; height: 1.3em; vertical-align: -0.28em; margin-right: 0.15em; color: var(--char-a, var(--gold)); }
+.c-icon-inline svg { width: 100%; height: 100%; display: block; }
 
 .char-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.6rem; margin: 0.8rem 0; }
 .char-btn {
   text-align: left; padding: 0.7rem; border-left: 6px solid var(--char-a, var(--border));
   background: linear-gradient(135deg, rgba(255,255,255,0.02), transparent);
 }
-.char-btn .c-title { font-weight: bold; display: block; margin-bottom: 0.2rem; color: var(--char-a, var(--text)); text-shadow: 0 0 8px var(--char-glow, transparent); }
+.char-btn .c-title { font-family: 'Cinzel', serif; font-weight: 600; display: flex; align-items: center; gap: 0.3rem; margin-bottom: 0.25rem; color: var(--char-a, var(--text)); text-shadow: 0 0 8px var(--char-glow, transparent); }
+.char-btn .c-title .c-icon-inline { width: 1.5em; height: 1.5em; margin-right: 0; }
 .char-btn .c-desc { font-size: 0.78rem; color: var(--muted); }
 .char-btn.selected { border-left-color: var(--gold-bright); background: var(--gold); color: #1a1410; box-shadow: 0 0 16px var(--char-glow, rgba(201,162,39,0.5)); }
 .char-btn.selected .c-title { color: #1a1410; text-shadow: none; }
@@ -261,3 +285,6 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   .char-grid { grid-template-columns: 1fr 1fr; }
   .challenge-flash .cf-title { font-size: 2.1rem; }
 }
+
+/* Thematic type touches */
+.p-name, .room-code-display, .code-pill, .lobby-code { font-family: 'Cinzel', serif; letter-spacing: 0.02em; }

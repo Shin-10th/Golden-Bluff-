@@ -121,7 +121,7 @@ function spawnChallengeFlash(pub, c) {
   div.className = `challenge-flash ${charClass(c.character)}`;
   div.innerHTML = `
     <div class="cf-title">⚔️ CHALLENGE!</div>
-    <div class="cf-sub">${challenger ? challenger.name : 'Someone'} challenges ${claimant ? claimant.name : 'someone'}'s ${meta.emoji} ${meta.name} claim!</div>
+    <div class="cf-sub">${challenger ? challenger.name : 'Someone'} challenges ${claimant ? claimant.name : 'someone'}'s <span class="c-icon-inline">${charIconHTML(c.character)}</span>${meta.name} claim!</div>
   `;
   fxLayer().appendChild(div);
   setTimeout(() => div.remove(), 1600);
@@ -250,7 +250,7 @@ function renderMyHand() {
     } else if (S.prevHand[idx] && S.prevHand[idx] !== c) {
       div.classList.add('flip-swap');
     }
-    div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+    div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
     handDiv.appendChild(div);
   });
 
@@ -282,7 +282,7 @@ function renderActionArea(pub) {
     const targetTxt = c.targetId ? ` targeting ${nameOf(pub, c.targetId)}` : '';
     const banner = document.createElement('div');
     banner.className = `action-banner ${charClass(c.character)}`;
-    banner.innerHTML = `${nameOf(pub, c.claimantId)} claims <b style="color:var(--char-a)">${meta.emoji} ${meta.name}</b>${targetTxt}.`;
+    banner.innerHTML = `${nameOf(pub, c.claimantId)} claims <b style="color:var(--char-a)"><span class="c-icon-inline">${charIconHTML(c.character)}</span>${meta.name}</b>${targetTxt}.`;
     area.appendChild(banner);
 
     if (c.claimantId === S.myId) {
@@ -329,7 +329,7 @@ function renderActionArea(pub) {
         const meta = CHARACTERS[c];
         const div = document.createElement('div');
         div.className = `hand-card clickable ${charClass(c)}`;
-        div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+        div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
         div.onclick = () => socket.emit('resolveDiscard', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
         row.appendChild(div);
       });
@@ -353,7 +353,7 @@ function renderActionArea(pub) {
         const meta = CHARACTERS[c];
         const div = document.createElement('div');
         div.className = `hand-card clickable ${charClass(c)}`;
-        div.innerHTML = `<div class="c-emoji">${meta.emoji}</div><div class="c-name">${meta.name}</div>`;
+        div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
         div.onclick = () => socket.emit('resolveTrickster', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
         row.appendChild(div);
       });
@@ -381,7 +381,7 @@ function buildClaimUI(pub) {
   Object.entries(CHARACTERS).forEach(([key, meta]) => {
     const btn = document.createElement('button');
     btn.className = `char-btn ${charClass(key)}` + (S.selectedCharacter === key ? ' selected' : '');
-    btn.innerHTML = `<span class="c-title">${meta.emoji} ${meta.name}</span><span class="c-desc">${meta.desc}</span>`;
+    btn.innerHTML = `<span class="c-title"><span class="c-icon-inline">${charIconHTML(key)}</span>${meta.name}</span><span class="c-desc">${meta.desc}</span>`;
     btn.onclick = () => { S.selectedCharacter = key; S.selectedTarget = null; render(); };
     grid.appendChild(btn);
   });
@@ -415,7 +415,7 @@ function buildClaimUI(pub) {
 
     const confirmBtn = document.createElement('button');
     confirmBtn.className = 'primary';
-    confirmBtn.textContent = `Claim ${meta.emoji} ${meta.name}`;
+    confirmBtn.textContent = `Claim ${meta.name}`;
     confirmBtn.disabled = (meta.needsTarget && !S.selectedTarget) || needsTicketWarning;
     confirmBtn.onclick = () => {
       socket.emit('makeClaim', { character: S.selectedCharacter, targetId: S.selectedTarget }, (res) => {
@@ -454,7 +454,8 @@ function renderSeerToast() {
   const toast = el('seer-toast');
   if (!S.seerToast) { toast.classList.add('hidden'); return; }
   toast.classList.remove('hidden');
-  el('seer-toast-body').textContent = `${S.seerToast.targetName} is secretly holding: ${S.seerToast.emoji} ${S.seerToast.characterName}`;
+  el('seer-toast-body').innerHTML = `${S.seerToast.targetName} is secretly holding: <span class="c-icon-inline">${charIconHTML(S.seerToast.character)}</span><b style="color:var(--char-a)">${S.seerToast.characterName}</b>`;
+  el('seer-toast-body').className = charClass(S.seerToast.character);
 }
 
 function nameOf(pub, id) {
