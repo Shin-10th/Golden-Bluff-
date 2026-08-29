@@ -6,12 +6,13 @@
 const CHARACTERS = {
   ROYAL:     { name: 'Royal',     emoji: '👑', needsTarget: false, summary: 'Gain 2 Golden Tickets.' },
   THIEF:     { name: 'Thief',     emoji: '🦹', needsTarget: true,  summary: 'Steal up to 2 Golden Tickets from another player.' },
-  GUARD:     { name: 'Guard',     emoji: '🛡️', needsTarget: false, summary: 'Blocked the next ability that targets you, until your next turn.' },
-  SEER:      { name: 'Seer',      emoji: '🔮', needsTarget: true,  summary: "Secretly see one of another player's Character cards." },
+  GUARD:     { name: 'Guard',     emoji: '🛡️', needsTarget: false, summary: "Not claimed on your turn. If you actually hold this card, you may reveal it the instant someone targets you with Thief, Seer, or Assassin, blocking that ability outright." },
+  SEER:      { name: 'Seer',      emoji: '🔮', needsTarget: true,  summary: "Look at one of another player's Character cards — they choose which one to show you." },
   TRICKSTER: { name: 'Trickster', emoji: '🎭', needsTarget: false, summary: 'Swap one of your Character cards for a new secret one.' },
   ASSASSIN:  { name: 'Assassin',  emoji: '☠️', needsTarget: true,  summary: 'Pay 2 Golden Tickets to force another player to discard a Character.' },
 };
 const CHARACTER_KEYS = Object.keys(CHARACTERS);
+const CLAIMABLE_CHARACTER_KEYS = CHARACTER_KEYS.filter((k) => k !== 'GUARD');
 const COPIES_PER_CHARACTER = 3;
 const WINNING_TICKETS = 10;
 const MIN_PLAYERS = 3;
@@ -37,15 +38,19 @@ function createRoom(code, rng = Math.random) {
   return {
     code,
     rng,
-    phase: 'lobby', // lobby | claim | challengeWindow | awaitingDiscard | awaitingTrickster | gameover
+    // lobby | claim | challengeWindow | awaitingGuardReaction | awaitingSeerChoice
+    // | awaitingDiscard | awaitingTrickster | gameover
+    phase: 'lobby',
     players: [],    // seat order
     deck: [],
     discardPile: [],
     turnIndex: -1,
     activePlayerId: null,
-    pendingClaim: null,     // { claimantId, character, targetId, passed:Set, challengerId, status }
-    pendingDiscard: null,   // { playerId, reason, continuation }
-    pendingTrickster: null, // { claimantId }
+    pendingClaim: null,         // { claimantId, character, targetId, passed:Set, challengerId, status }
+    pendingGuardReaction: null, // { claimantId, character, targetId }
+    pendingSeerChoice: null,    // { seerId, targetId }
+    pendingDiscard: null,       // { playerId, reason, continuation }
+    pendingTrickster: null,     // { claimantId }
     hostId: null,
     winnerId: null,
     log: [],
@@ -71,10 +76,7 @@ function addPlayer(room, id, name) {
   if (room.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
     return { ok: false, error: 'That name is taken in this room.' };
   }
-  const player = {
-    id, name, hand: [], tickets: 0, alive: true,
-    protectedUntilNextTurn: false, connected: true,
-  };
+  const player = { id, name, hand: [], tickets: 0, alive: true, connected: true };
   room.players.push(player);
   if (!room.hostId) room.hostId = id;
   log(room, `${name} joined the room.`);
@@ -106,7 +108,6 @@ function startGame(room) {
     p.hand = [room.deck.pop(), room.deck.pop()];
     p.tickets = 0;
     p.alive = true;
-    p.protectedUntilNextTurn = false;
   }
   room.turnIndex = Math.floor(room.rng() * room.players.length);
   room.winnerId = null;
@@ -124,14 +125,19 @@ function nextAliveIndex(room, fromIndex) {
   return -1;
 }
 
+function clearPending(room) {
+  room.pendingClaim = null;
+  room.pendingGuardReaction = null;
+  room.pendingSeerChoice = null;
+  room.pendingDiscard = null;
+  room.pendingTrickster = null;
+}
+
 function beginTurn(room, seatIndex) {
   const player = room.players[seatIndex];
   room.turnIndex = seatIndex;
   room.activePlayerId = player.id;
-  room.pendingClaim = null;
-  room.pendingDiscard = null;
-  room.pendingTrickster = null;
-  player.protectedUntilNextTurn = false;
+  clearPending(room);
 
   player.tickets += 1;
   log(room, `${player.name} takes Stable Income (+1 🎟️).`);
@@ -155,9 +161,7 @@ function checkWinner(room) {
 function finishGame(room, winner) {
   room.phase = 'gameover';
   room.winnerId = winner.id;
-  room.pendingClaim = null;
-  room.pendingDiscard = null;
-  room.pendingTrickster = null;
+  clearPending(room);
   log(room, `🏆 ${winner.name} wins with ${winner.tickets} Golden Tickets!`);
 }
 
@@ -176,6 +180,9 @@ function makeClaim(room, playerId, character, targetId = null) {
   if (room.phase !== 'claim') return { ok: false, error: 'Not the claim phase.' };
   if (room.activePlayerId !== playerId) return { ok: false, error: 'Not your turn.' };
   if (!CHARACTER_KEYS.includes(character)) return { ok: false, error: 'Unknown character.' };
+  if (character === 'GUARD') {
+    return { ok: false, error: 'Guard is never claimed on your turn — reveal it reactively if someone targets you.' };
+  }
 
   const claimant = getPlayer(room, playerId);
   const meta = CHARACTERS[character];
@@ -294,10 +301,9 @@ function eliminateIfNeeded(room, player) {
 }
 
 // Returns true if the ability fully resolved synchronously (safe to advance turn),
-// or false if it opened a new pending interaction (assassin discard / trickster swap).
+// or false if it opened a new pending interaction (guard reaction / seer choice / assassin discard / trickster swap).
 function applyAbilityEffect(room, claimantId, character, targetId) {
   const claimant = getPlayer(room, claimantId);
-  const meta = CHARACTERS[character];
 
   switch (character) {
     case 'ROYAL': {
@@ -305,65 +311,112 @@ function applyAbilityEffect(room, claimantId, character, targetId) {
       log(room, `${claimant.name} gains 2 🎟️ from Royal.`);
       return true;
     }
-    case 'THIEF': {
-      const target = getPlayer(room, targetId);
-      if (target.protectedUntilNextTurn) {
-        target.protectedUntilNextTurn = false;
-        log(room, `🛡️ ${target.name}'s Guard blocks the Thief!`);
-        return true;
-      }
-      const amount = Math.min(2, target.tickets);
-      target.tickets -= amount;
-      claimant.tickets += amount;
-      log(room, `${claimant.name} steals ${amount} 🎟️ from ${target.name}.`);
-      return true;
-    }
-    case 'GUARD': {
-      claimant.protectedUntilNextTurn = true;
-      log(room, `${claimant.name} is protected until their next turn.`);
-      return true;
-    }
-    case 'SEER': {
-      const target = getPlayer(room, targetId);
-      if (target.protectedUntilNextTurn) {
-        target.protectedUntilNextTurn = false;
-        log(room, `🛡️ ${target.name}'s Guard blocks the Seer!`);
-        return true;
-      }
-      const idx = Math.floor(room.rng() * target.hand.length);
-      const seen = target.hand[idx];
-      room.lastSeerReveal = { seerId: claimant.id, targetId: target.id, character: seen };
-      log(room, `${claimant.name} secretly peeks at one of ${target.name}'s cards.`);
-      return true;
-    }
     case 'TRICKSTER': {
       if (claimant.hand.length <= 1) {
-        if (claimant.hand.length === 1) {
-          const only = claimant.hand[0];
-          revealReturnShuffleDraw(room, claimant.id, only);
-        }
+        if (claimant.hand.length === 1) revealReturnShuffleDraw(room, claimant.id, claimant.hand[0]);
         return true;
       }
       room.phase = 'awaitingTrickster';
       room.pendingTrickster = { claimantId: claimant.id };
       return false;
     }
+    case 'THIEF':
+    case 'SEER':
     case 'ASSASSIN': {
-      const target = getPlayer(room, targetId);
-      if (claimant.tickets >= 2) claimant.tickets -= 2;
-      log(room, `${claimant.name} pays 2 🎟️ for the Assassin.`);
-      if (target.protectedUntilNextTurn) {
-        target.protectedUntilNextTurn = false;
-        log(room, `🛡️ ${target.name}'s Guard blocks the Assassin!`);
-        return true;
+      // Assassin pays their 2 tickets up front, whether or not Guard ends up blocking it —
+      // the cost is for attempting the attack, not for it landing.
+      if (character === 'ASSASSIN') {
+        if (claimant.tickets >= 2) claimant.tickets -= 2;
+        log(room, `${claimant.name} pays 2 🎟️ for the Assassin.`);
       }
-      room.phase = 'awaitingDiscard';
-      room.pendingDiscard = { playerId: target.id, reason: 'assassinated' };
+      room.phase = 'awaitingGuardReaction';
+      room.pendingGuardReaction = { claimantId, character, targetId };
       return false;
     }
     default:
       return true;
   }
+}
+
+// The targeted player may reveal an actual Guard card to block, or decline (or time out).
+function resolveGuardReaction(room, playerId, reveal, cardIndex) {
+  const g = room.pendingGuardReaction;
+  if (room.phase !== 'awaitingGuardReaction' || !g || g.targetId !== playerId) {
+    return { ok: false, error: 'No reaction is waiting on you right now.' };
+  }
+  const { claimantId, character } = g;
+  const target = getPlayer(room, playerId);
+  const claimant = getPlayer(room, claimantId);
+  const meta = CHARACTERS[character];
+
+  if (reveal) {
+    if (typeof cardIndex !== 'number' || cardIndex < 0 || cardIndex >= target.hand.length || target.hand[cardIndex] !== 'GUARD') {
+      return { ok: false, error: 'You do not have a Guard card to reveal.' };
+    }
+    room.pendingGuardReaction = null;
+    log(room, `🛡️ ${target.name} reveals GUARD and blocks ${claimant.name}'s ${meta.name}!`);
+    revealReturnShuffleDraw(room, playerId, 'GUARD');
+    checkWinOrAdvance(room);
+    return { ok: true, blocked: true };
+  }
+
+  room.pendingGuardReaction = null;
+  proceedWithTargetedEffect(room, claimantId, character, playerId);
+  return { ok: true, blocked: false };
+}
+
+// Runs the actual Thief/Seer/Assassin effect once Guard did not block it.
+// Always leaves the room in a state ready for checkWinOrAdvance, either directly
+// or via a further pending interaction (Seer's reveal choice / Assassin's forced discard).
+function proceedWithTargetedEffect(room, claimantId, character, targetId) {
+  const claimant = getPlayer(room, claimantId);
+  const target = getPlayer(room, targetId);
+
+  if (character === 'THIEF') {
+    const amount = Math.min(2, target.tickets);
+    target.tickets -= amount;
+    claimant.tickets += amount;
+    log(room, `${claimant.name} steals ${amount} 🎟️ from ${target.name}.`);
+    checkWinOrAdvance(room);
+    return;
+  }
+
+  if (character === 'SEER') {
+    if (target.hand.length <= 1) {
+      const seen = target.hand[0];
+      room.lastSeerReveal = { seerId: claimant.id, targetId: target.id, character: seen };
+      log(room, `${target.name} has only one card left and shows it to ${claimant.name}.`);
+      checkWinOrAdvance(room);
+    } else {
+      room.phase = 'awaitingSeerChoice';
+      room.pendingSeerChoice = { seerId: claimant.id, targetId: target.id };
+      log(room, `${target.name} is choosing which card to show ${claimant.name}...`);
+    }
+    return;
+  }
+
+  if (character === 'ASSASSIN') {
+    room.phase = 'awaitingDiscard';
+    room.pendingDiscard = { playerId: target.id, reason: 'assassinated' };
+    return;
+  }
+}
+
+// The Seer's target picks which of their own cards to reveal (only relevant with 2 cards).
+function resolveSeerChoice(room, playerId, cardIndex) {
+  const s = room.pendingSeerChoice;
+  if (room.phase !== 'awaitingSeerChoice' || !s || s.targetId !== playerId) {
+    return { ok: false, error: 'No Seer choice is waiting on you right now.' };
+  }
+  const target = getPlayer(room, playerId);
+  if (cardIndex < 0 || cardIndex >= target.hand.length) return { ok: false, error: 'Invalid card.' };
+  const seen = target.hand[cardIndex];
+  room.lastSeerReveal = { seerId: s.seerId, targetId: playerId, character: seen };
+  const seer = getPlayer(room, s.seerId);
+  log(room, `${target.name} shows one of their cards to ${seer ? seer.name : 'the Seer'}.`);
+  room.pendingSeerChoice = null;
+  checkWinOrAdvance(room);
+  return { ok: true };
 }
 
 function resolveDiscard(room, playerId, cardIndex) {
@@ -380,11 +433,7 @@ function resolveDiscard(room, playerId, cardIndex) {
   eliminateIfNeeded(room, player);
   room.pendingDiscard = null;
 
-  if (reason === 'lied') {
-    checkWinOrAdvance(room);
-    return { ok: true };
-  }
-  if (reason === 'assassinated') {
+  if (reason === 'lied' || reason === 'assassinated') {
     checkWinOrAdvance(room);
     return { ok: true };
   }
@@ -426,7 +475,7 @@ function serializePublicState(room) {
     deckCount: room.deck.length,
     players: room.players.map((p) => ({
       id: p.id, name: p.name, tickets: p.tickets, cardCount: p.hand.length,
-      alive: p.alive, connected: p.connected, protected: p.protectedUntilNextTurn,
+      alive: p.alive, connected: p.connected,
     })),
     pendingClaim: room.pendingClaim ? {
       claimantId: room.pendingClaim.claimantId,
@@ -435,6 +484,15 @@ function serializePublicState(room) {
       status: room.pendingClaim.status,
       passed: [...room.pendingClaim.passed],
       eligible: eligibleChallengers(room),
+    } : null,
+    pendingGuardReaction: room.pendingGuardReaction ? {
+      claimantId: room.pendingGuardReaction.claimantId,
+      character: room.pendingGuardReaction.character,
+      targetId: room.pendingGuardReaction.targetId,
+    } : null,
+    pendingSeerChoice: room.pendingSeerChoice ? {
+      seerId: room.pendingSeerChoice.seerId,
+      targetId: room.pendingSeerChoice.targetId,
     } : null,
     pendingDiscard: room.pendingDiscard ? { playerId: room.pendingDiscard.playerId, reason: room.pendingDiscard.reason } : null,
     pendingTrickster: room.pendingTrickster ? { claimantId: room.pendingTrickster.claimantId } : null,
@@ -448,8 +506,9 @@ function serializePrivateHand(room, playerId) {
 }
 
 module.exports = {
-  CHARACTERS, CHARACTER_KEYS, MIN_PLAYERS, MAX_PLAYERS, WINNING_TICKETS,
+  CHARACTERS, CHARACTER_KEYS, CLAIMABLE_CHARACTER_KEYS, MIN_PLAYERS, MAX_PLAYERS, WINNING_TICKETS,
   createRoom, addPlayer, removePlayer, canStart, startGame,
-  makeClaim, pass, challenge, resolveUnchallenged, resolveDiscard, resolveTrickster,
+  makeClaim, pass, challenge, resolveUnchallenged,
+  resolveGuardReaction, resolveSeerChoice, resolveDiscard, resolveTrickster,
   serializePublicState, serializePrivateHand, getPlayer, alivePlayers,
 };

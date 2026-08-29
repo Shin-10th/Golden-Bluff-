@@ -24,6 +24,11 @@ function freshRoom(names) {
 }
 function byName(room, name) { return room.players.find((p) => p.name === name); }
 function setHand(room, name, hand) { byName(room, name).hand = hand.slice(); }
+function forceTurn(room, seatIndex) {
+  room.turnIndex = seatIndex;
+  room.activePlayerId = room.players[seatIndex].id;
+  room.phase = 'claim';
+}
 
 test('lobby requires 3-6 players to start', () => {
   const room = engine.createRoom('R1');
@@ -41,26 +46,10 @@ test('stable income is applied and cannot be challenged (no API to challenge it)
   assert.strictEqual(room.phase, 'claim');
 });
 
-test('winning immediately via stable income skips the claim phase', () => {
-  const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  const nextIdx = engine.getPlayer(room, room.activePlayerId);
-  nextIdx.tickets = 9; // about to take income -> 10
-  // force their turn to run again by simulating end-of-turn advance
-  room.pendingClaim = null;
-  const idx = room.players.indexOf(nextIdx);
-  // re-run beginTurn logic via internal advance: fake a claim resolution path
-  room.turnIndex = idx;
-  // call private beginTurn indirectly through resolveUnchallenged is complex; instead directly assert income math
-  nextIdx.tickets += 1;
-  assert.strictEqual(nextIdx.tickets, 10);
-});
-
 test('caught lying: ability cancelled, claimant discards, challenger +1 ticket', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
-  setHand(room, 'Alice', ['THIEF', 'GUARD']); // does NOT have Royal
+  forceTurn(room, 0);
+  setHand(room, 'Alice', ['THIEF', 'TRICKSTER']); // does NOT have Royal
   const alice = byName(room, 'Alice');
   const bob = byName(room, 'Bob');
   alice.tickets = 3;
@@ -84,12 +73,10 @@ test('caught lying: ability cancelled, claimant discards, challenger +1 ticket',
   assert.strictEqual(room.phase, 'claim', 'turn advances to next alive player');
 });
 
-test('truthful claim survives challenge: challenger discards, claimant gets ability + reveal/redraw', () => {
+test('truthful non-targeted claim (Royal) survives challenge: challenger discards, ability + reveal/redraw happen', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
-  setHand(room, 'Alice', ['ROYAL', 'GUARD']);
+  forceTurn(room, 0);
+  setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
   setHand(room, 'Bob', ['THIEF', 'SEER']);
   const alice = byName(room, 'Alice');
   const bob = byName(room, 'Bob');
@@ -108,66 +95,162 @@ test('truthful claim survives challenge: challenger discards, claimant gets abil
   assert.strictEqual(room.phase, 'claim');
 });
 
-test('guard blocks a targeted thief ability and consumes the protection', () => {
+test('GUARD can never be claimed on your own turn', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
-  const alice = byName(room, 'Alice');
-  // Target Cara (not the next player in turn order) so her ticket count
-  // isn't confounded by the next player's stable income when the turn advances.
+  forceTurn(room, 0);
+  const res = engine.makeClaim(room, 'p0', 'GUARD', null);
+  assert.strictEqual(res.ok, false);
+});
+
+test('every targeted ability opens a Guard-reaction window for the target first', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  byName(room, 'Bob').tickets = 5;
+  setHand(room, 'Alice', ['THIEF', 'TRICKSTER']);
+
+  engine.makeClaim(room, 'p0', 'THIEF', 'p1');
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+  assert.strictEqual(room.phase, 'awaitingGuardReaction');
+  assert.strictEqual(room.pendingGuardReaction.targetId, 'p1');
+});
+
+test('revealing a real Guard blocks Thief and cycles the Guard card back into the deck', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  // Target Cara (not the next player in turn order) so her ticket count isn't
+  // confounded by the next player's stable income when the turn advances.
   const cara = byName(room, 'Cara');
   cara.tickets = 5;
-  cara.protectedUntilNextTurn = true;
+  setHand(room, 'Cara', ['GUARD', 'SEER']);
+  setHand(room, 'Alice', ['THIEF', 'TRICKSTER']);
+
+  engine.makeClaim(room, 'p0', 'THIEF', 'p2');
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+
+  const res = engine.resolveGuardReaction(room, 'p2', true, 0); // reveal the GUARD at index 0
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.blocked, true);
+  assert.strictEqual(cara.tickets, 5, 'steal blocked entirely');
+  assert.ok(!cara.hand.includes('GUARD'), 'the revealed Guard was returned to the deck');
+  assert.strictEqual(cara.hand.length, 2, 'drew a replacement, hand size unchanged');
+  assert.strictEqual(room.phase, 'claim', 'turn advanced once resolved');
+});
+
+test('cannot fake a Guard reveal without actually holding one', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  byName(room, 'Bob').tickets = 5;
+  setHand(room, 'Bob', ['SEER', 'TRICKSTER']); // no Guard
+  setHand(room, 'Alice', ['THIEF', 'ROYAL']);
+
+  engine.makeClaim(room, 'p0', 'THIEF', 'p1');
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+
+  const res = engine.resolveGuardReaction(room, 'p1', true, 0);
+  assert.strictEqual(res.ok, false, 'server rejects a reveal claim for a card that is not actually Guard');
+  assert.strictEqual(room.phase, 'awaitingGuardReaction', 'nothing changed, still waiting');
+});
+
+test('declining the Guard reaction lets Thief steal normally', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  const cara = byName(room, 'Cara');
+  alice.tickets = 1; // known baseline, independent of freshRoom's random starting player
+  cara.tickets = 5;
   setHand(room, 'Alice', ['THIEF', 'ROYAL']);
 
   engine.makeClaim(room, 'p0', 'THIEF', 'p2');
   engine.pass(room, 'p1');
-  engine.pass(room, 'p2'); // all eligible passed -> resolves unchallenged
-  assert.strictEqual(cara.tickets, 5, 'steal blocked by guard');
-  assert.strictEqual(cara.protectedUntilNextTurn, false, 'guard consumed');
+  engine.pass(room, 'p2');
+  engine.resolveGuardReaction(room, 'p2', false);
+
+  assert.strictEqual(cara.tickets, 3, 'lost 2 to the steal');
+  assert.strictEqual(alice.tickets, 3, 'gained the stolen 2 (1 + 2 stolen)');
   assert.strictEqual(room.phase, 'claim');
 });
 
-test('assassin costs 2 tickets and forces target to choose a discard; elimination clears tickets', () => {
+test('assassin still pays 2 tickets even when Guard blocks the discard', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
+  forceTurn(room, 0);
   const alice = byName(room, 'Alice');
   const bob = byName(room, 'Bob');
   alice.tickets = 4;
-  bob.tickets = 7;
-  setHand(room, 'Alice', ['ASSASSIN', 'GUARD']);
+  setHand(room, 'Alice', ['ASSASSIN', 'ROYAL']);
+  setHand(room, 'Bob', ['GUARD', 'SEER']);
+
+  engine.makeClaim(room, 'p0', 'ASSASSIN', 'p1');
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+  assert.strictEqual(alice.tickets, 2, 'paid 2 tickets for the assassin attempt');
+
+  const res = engine.resolveGuardReaction(room, 'p1', true, 0);
+  assert.strictEqual(res.blocked, true);
+  assert.strictEqual(bob.hand.length, 2, 'no discard happened, Guard cycled instead');
+  assert.strictEqual(room.phase, 'claim');
+});
+
+test('assassin forces the target to choose a discard when Guard is declined', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  const bob = byName(room, 'Bob');
+  alice.tickets = 4;
+  setHand(room, 'Alice', ['ASSASSIN', 'ROYAL']);
   setHand(room, 'Bob', ['SEER']); // Bob only has 1 card left
 
   engine.makeClaim(room, 'p0', 'ASSASSIN', 'p1');
   engine.pass(room, 'p1');
   engine.pass(room, 'p2');
-  assert.strictEqual(alice.tickets, 2, 'paid 2 tickets for assassin');
+  engine.resolveGuardReaction(room, 'p1', false);
   assert.strictEqual(room.pendingDiscard.playerId, 'p1', 'target chooses their own discard');
 
   engine.resolveDiscard(room, 'p1', 0);
   assert.strictEqual(bob.alive, false, 'eliminated after losing last card');
   assert.strictEqual(bob.tickets, 0, 'tickets return to supply on elimination');
-  assert.strictEqual(room.phase, 'claim', 'game continues to next alive player');
+  assert.strictEqual(room.phase, 'claim');
 });
 
-test('cannot claim assassin without at least 2 tickets', () => {
+test('seer target with 2 cards must choose which one to reveal', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
-  byName(room, 'Alice').tickets = 1;
-  const res = engine.makeClaim(room, 'p0', 'ASSASSIN', 'p1');
-  assert.strictEqual(res.ok, false);
+  forceTurn(room, 0);
+  setHand(room, 'Alice', ['SEER', 'ROYAL']);
+  setHand(room, 'Bob', ['GUARD', 'ASSASSIN']);
+
+  engine.makeClaim(room, 'p0', 'SEER', 'p1');
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+  engine.resolveGuardReaction(room, 'p1', false); // Bob has Guard but chooses not to reveal it
+  assert.strictEqual(room.phase, 'awaitingSeerChoice');
+  assert.strictEqual(room.pendingSeerChoice.targetId, 'p1');
+
+  const res = engine.resolveSeerChoice(room, 'p1', 1); // Bob shows his ASSASSIN, keeps GUARD secret
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(room.lastSeerReveal.character, 'ASSASSIN');
+  assert.strictEqual(room.phase, 'claim');
+});
+
+test('seer target with only 1 card auto-reveals it, no choice needed', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  setHand(room, 'Alice', ['SEER', 'ROYAL']);
+  setHand(room, 'Bob', ['TRICKSTER']);
+
+  engine.makeClaim(room, 'p0', 'SEER', 'p1');
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+  engine.resolveGuardReaction(room, 'p1', false);
+
+  assert.strictEqual(room.phase, 'claim', 'resolved immediately, no choice phase for a single card');
+  assert.strictEqual(room.lastSeerReveal.character, 'TRICKSTER');
 });
 
 test('trickster with 2 cards requires an explicit swap choice; with 1 card auto-resolves', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
+  forceTurn(room, 0);
   setHand(room, 'Alice', ['TRICKSTER', 'ROYAL']);
 
   engine.makeClaim(room, 'p0', 'TRICKSTER', null);
@@ -181,11 +264,17 @@ test('trickster with 2 cards requires an explicit swap choice; with 1 card auto-
 
 test('thief cannot target a player with 0 tickets', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
-  room.activePlayerId = 'p0';
-  room.turnIndex = 0;
-  room.phase = 'claim';
+  forceTurn(room, 0);
   byName(room, 'Bob').tickets = 0;
   const res = engine.makeClaim(room, 'p0', 'THIEF', 'p1');
+  assert.strictEqual(res.ok, false);
+});
+
+test('cannot claim assassin without at least 2 tickets', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  byName(room, 'Alice').tickets = 1;
+  const res = engine.makeClaim(room, 'p0', 'ASSASSIN', 'p1');
   assert.strictEqual(res.ok, false);
 });
 

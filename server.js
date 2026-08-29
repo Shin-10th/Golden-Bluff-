@@ -16,6 +16,7 @@ const socketInfo = new Map();  // socket.id -> { roomCode }
 const roomTimers = new Map();  // code -> Timeout
 
 const CHALLENGE_WINDOW_MS = 20000;
+const REACTION_WINDOW_MS = 12000; // Guard-reveal / Seer-choice windows: shorter, single-player decisions
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I/O to avoid confusion with 1/0
 
 function makeRoomCode() {
@@ -33,12 +34,21 @@ function clearRoomTimer(code) {
 
 function armRoomTimer(room) {
   clearRoomTimer(room.code);
+  const phaseAtArmTime = room.phase;
+  const delay = phaseAtArmTime === 'challengeWindow' ? CHALLENGE_WINDOW_MS : REACTION_WINDOW_MS;
   const t = setTimeout(() => {
+    // Re-check the phase at fire time — it may have already moved on.
     if (room.phase === 'challengeWindow') {
       engine.resolveUnchallenged(room);
-      broadcastRoom(room);
+    } else if (room.phase === 'awaitingGuardReaction' && room.pendingGuardReaction) {
+      engine.resolveGuardReaction(room, room.pendingGuardReaction.targetId, false);
+    } else if (room.phase === 'awaitingSeerChoice' && room.pendingSeerChoice) {
+      engine.resolveSeerChoice(room, room.pendingSeerChoice.targetId, 0); // auto-pick first card if nobody responds
+    } else {
+      return;
     }
-  }, CHALLENGE_WINDOW_MS);
+    broadcastRoom(room);
+  }, delay);
   roomTimers.set(room.code, t);
 }
 
@@ -82,7 +92,9 @@ function withRoom(socket, fn) {
       console.error('Action error:', err);
       result = { ok: false, error: 'Server error.' };
     }
-    if (room.phase === 'challengeWindow') armRoomTimer(room);
+    if (room.phase === 'challengeWindow' || room.phase === 'awaitingGuardReaction' || room.phase === 'awaitingSeerChoice') {
+      armRoomTimer(room);
+    }
     broadcastRoom(room);
     if (cb) cb(result);
   };
@@ -132,6 +144,10 @@ io.on('connection', (socket) => {
   socket.on('resolveDiscard', withRoom(socket, (room, playerId, data) => engine.resolveDiscard(room, playerId, data.cardIndex)));
 
   socket.on('resolveTrickster', withRoom(socket, (room, playerId, data) => engine.resolveTrickster(room, playerId, data.cardIndex)));
+
+  socket.on('guardReact', withRoom(socket, (room, playerId, data) => engine.resolveGuardReaction(room, playerId, !!data.reveal, data.cardIndex)));
+
+  socket.on('seerChoice', withRoom(socket, (room, playerId, data) => engine.resolveSeerChoice(room, playerId, data.cardIndex)));
 
   socket.on('announce', (data) => {
     const room = getRoomForSocket(socket);
