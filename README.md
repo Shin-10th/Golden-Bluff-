@@ -15,7 +15,7 @@ Full rules are in the attached Claude project. Tech stack notes are in `docs/TEC
 2. Open http://localhost:3000 — create a room, get the 4-letter code.
 3. Other players on the same wifi open http://<your-computer's-LAN-IP>:3000 and join with that code.
    (Find your LAN IP with `ipconfig` on Windows — look for "IPv4 Address".)
-4. 3–6 players, host clicks Start once everyone's in.
+4. 2–6 players, host clicks Start once everyone's in.
 
 Real internet play (not just same wifi) needs deploying the server somewhere like
 Render or Railway — happy to do that once you're happy with the rules on the local network.

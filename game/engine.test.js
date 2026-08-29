@@ -30,12 +30,11 @@ function forceTurn(room, seatIndex) {
   room.phase = 'claim';
 }
 
-test('lobby requires 3-6 players to start', () => {
+test('lobby requires 2-6 players to start', () => {
   const room = engine.createRoom('R1');
   engine.addPlayer(room, 'a', 'Alice');
-  engine.addPlayer(room, 'b', 'Bob');
   assert.strictEqual(engine.canStart(room), false);
-  engine.addPlayer(room, 'c', 'Cara');
+  engine.addPlayer(room, 'b', 'Bob');
   assert.strictEqual(engine.canStart(room), true);
 });
 
@@ -134,7 +133,8 @@ test('revealing a real Guard blocks Thief and cycles the Guard card back into th
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.blocked, true);
   assert.strictEqual(cara.tickets, 5, 'steal blocked entirely');
-  assert.ok(!cara.hand.includes('GUARD'), 'the revealed Guard was returned to the deck');
+  // Not asserting the redrawn card isn't GUARD: shuffle-then-draw can legitimately hand it
+  // straight back (there are 3 copies in the deck) — that's correct behaviour, not a bug.
   assert.strictEqual(cara.hand.length, 2, 'drew a replacement, hand size unchanged');
   assert.strictEqual(room.phase, 'claim', 'turn advanced once resolved');
 });
@@ -327,6 +327,34 @@ test('royal payout ignores an eliminated player who happened to hold a Royal', (
   engine.pass(room, 'p2'); // Bob is dead, only Cara can act
 
   assert.strictEqual(alice.tickets, 5, 'full +2, the eliminated player does not count as a rival');
+});
+
+test('a 2-player game plays end to end: claim, correct challenge, discard, and elimination win', () => {
+  const room = freshRoom(['Alice', 'Bob']);
+  assert.strictEqual(room.players.length, 2);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  const bob = byName(room, 'Bob');
+  setHand(room, 'Alice', ['THIEF']); // down to Alice's last card, and lying about Royal
+  setHand(room, 'Bob', ['GUARD', 'SEER']);
+  alice.tickets = 3;
+  bob.tickets = 0; // freshRoom picks a random starting player, who gets Stable Income — reset regardless
+
+  const claimRes = engine.makeClaim(room, 'p0', 'ROYAL', null);
+  assert.strictEqual(claimRes.ok, true);
+  const pub = engine.serializePublicState(room);
+  assert.deepStrictEqual(pub.pendingClaim.eligible, ['p1'], 'in a 2-player game only the other player can act');
+
+  const chRes = engine.challenge(room, 'p1'); // Bob calls the bluff, correctly
+  assert.strictEqual(chRes.ok, true);
+  assert.strictEqual(chRes.truthful, false);
+  assert.strictEqual(bob.tickets, 1);
+
+  engine.resolveDiscard(room, 'p0', 0); // Alice's only card goes — she's out
+  assert.strictEqual(alice.alive, false);
+  assert.strictEqual(alice.tickets, 0, 'eliminated player\'s tickets return to the supply');
+  assert.strictEqual(room.phase, 'gameover', 'last player standing wins immediately, even at just 2 players');
+  assert.strictEqual(room.winnerId, 'p1');
 });
 
 console.log(`\n${passCount} test(s) passed.`);

@@ -413,9 +413,9 @@ function renderLobby() {
   const isHost = pub && pub.hostId === S.myId;
   const count = pub ? pub.players.length : 0;
   el('start-game-btn').classList.toggle('hidden', !isHost);
-  el('start-game-btn').disabled = count < 3 || count > 6;
+  el('start-game-btn').disabled = count < 2 || count > 6;
   el('lobby-hint').textContent = isHost
-    ? (count < 3 ? `Need at least 3 players (currently ${count}).` : `Ready to start with ${count} players.`)
+    ? (count < 2 ? `Need at least 2 players (currently ${count}).` : `Ready to start with ${count} players.`)
     : 'Waiting for the host to start the game...';
 }
 

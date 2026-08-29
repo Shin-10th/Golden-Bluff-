@@ -15,7 +15,7 @@ const CHARACTER_KEYS = Object.keys(CHARACTERS);
 const CLAIMABLE_CHARACTER_KEYS = CHARACTER_KEYS.filter((k) => k !== 'GUARD');
 const COPIES_PER_CHARACTER = 3;
 const WINNING_TICKETS = 10;
-const MIN_PLAYERS = 3;
+const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
 
 function shuffle(arr, rng = Math.random) {
