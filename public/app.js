@@ -30,6 +30,7 @@ const S = {
   seerToast: null,
   confettiSpawned: false,
   lastFlashSig: null,
+  lastScreen: null,
 };
 
 // Builds one trading-card-style Character card: art + name + full description.
@@ -48,7 +49,9 @@ function buildCharCard(key, opts = {}) {
     <div class="c-name">${meta.name}</div>
     <div class="c-desc">${opts.descOverride || meta.desc}</div>
   `;
-  if (opts.onClick && !opts.disabled) card.onclick = opts.onClick;
+  if (opts.onClick && !opts.disabled) {
+    card.onclick = () => { AudioFX.sfx('click'); opts.onClick(); };
+  }
   return card;
 }
 
@@ -62,6 +65,7 @@ socket.on('connect', () => { S.myId = socket.id; });
 
 socket.on('state', (pub) => {
   maybeFlashChallenge(S.pub, pub);
+  reactToNewLogEntries(S.pub, pub);
   S.prevPub = S.pub;
   S.pub = pub;
   if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
@@ -109,6 +113,7 @@ el('join-form').addEventListener('submit', (e) => {
 });
 
 el('start-game-btn').addEventListener('click', () => {
+  AudioFX.sfx('click');
   socket.emit('startGame', {}, (res) => { if (!res.ok) alert(res.error); });
 });
 
@@ -153,6 +158,54 @@ function spawnChallengeFlash(pub, c) {
   setTimeout(() => div.remove(), 1600);
 }
 
+// Generic hook: skim newly-added activity-log lines for keywords and play the
+// matching sound (and, for a Guard block, a visual flash) — works for every
+// player's client without any extra server events, since pub.log is already broadcast.
+function reactToNewLogEntries(prevPub, pub) {
+  if (!pub || !pub.log) return;
+  const prevLast = prevPub && prevPub.log && prevPub.log.length ? prevPub.log[prevPub.log.length - 1].ts : 0;
+  const newEntries = pub.log.filter((e) => e.ts > prevLast);
+  newEntries.forEach((e) => {
+    const t = e.text;
+    if (/reveals GUARD and blocks/.test(t)) { AudioFX.sfx('shield'); spawnGuardFlash(t); }
+    else if (/was bluffing/.test(t)) AudioFX.sfx('bust');
+    else if (/shouts CHALLENGE/.test(t)) AudioFX.sfx('challenge');
+    else if (/wins with/.test(t)) AudioFX.sfx('win');
+    else if (/is eliminated/.test(t)) AudioFX.sfx('defeat');
+    else if (/claims/.test(t)) AudioFX.sfx('claim');
+    else if (/steals|gains 2 🎟️ from Royal|for the correct challenge|for winning the challenge|Stable Income/.test(t)) AudioFX.sfx('coin');
+    else if (/discards|pays 2 🎟️/.test(t)) AudioFX.sfx('loss');
+  });
+}
+
+function spawnGuardFlash(logText) {
+  const div = document.createElement('div');
+  div.className = 'guard-flash char-GUARD';
+  div.innerHTML = `<div class="gf-title">🛡️ BLOCKED!</div><div class="gf-sub">${logText}</div>`;
+  fxLayer().appendChild(div);
+  setTimeout(() => div.remove(), 1500);
+}
+
+// A slow, continuous drift of embers rising from the bottom of the screen —
+// purely decorative ambiance for the fx-layer, paused when the tab isn't visible.
+function spawnEmber() {
+  const layer = fxLayer();
+  const ember = document.createElement('div');
+  ember.className = 'ember';
+  const size = 3 + Math.random() * 3;
+  const duration = 7 + Math.random() * 5;
+  ember.style.left = Math.random() * 100 + 'vw';
+  ember.style.width = size + 'px';
+  ember.style.height = size + 'px';
+  ember.style.setProperty('--drift', (Math.random() * 80 - 40) + 'px');
+  ember.style.animationDuration = duration + 's';
+  layer.appendChild(ember);
+  setTimeout(() => ember.remove(), duration * 1000 + 200);
+}
+function startAmbientParticles() {
+  setInterval(() => { if (document.visibilityState === 'visible') spawnEmber(); }, 900);
+}
+
 function spawnConfetti() {
   const layer = fxLayer();
   const count = 70;
@@ -178,6 +231,14 @@ function render() {
   el('screen-auth').classList.toggle('hidden', S.screen !== 'auth');
   el('screen-lobby').classList.toggle('hidden', S.screen !== 'lobby');
   el('screen-game').classList.toggle('hidden', S.screen !== 'game');
+
+  if (S.screen !== S.lastScreen) {
+    const activeEl = el(`screen-${S.screen}`);
+    activeEl.classList.remove('screen-enter');
+    void activeEl.offsetWidth; // reflow so the animation restarts
+    activeEl.classList.add('screen-enter');
+    S.lastScreen = S.screen;
+  }
 
   if (S.screen === 'lobby') renderLobby();
   if (S.screen === 'game') renderGame();
@@ -217,6 +278,8 @@ function renderGame() {
   const pub = S.pub;
   if (!pub) return;
   el('game-code').textContent = pub.code;
+
+  el('table-ring').classList.toggle('my-turn', pub.activePlayerId === S.myId && pub.phase !== 'gameover');
 
   renderSeats(pub);
   renderTableCenter(pub);
@@ -321,10 +384,11 @@ function renderTableCenter(pub) {
       const challengeBtn = document.createElement('button');
       challengeBtn.className = 'danger';
       challengeBtn.textContent = 'CHALLENGE!';
-      challengeBtn.onclick = () => socket.emit('challenge', {}, (res) => { if (!res.ok) alert(res.error); });
+      challengeBtn.onclick = () => { AudioFX.sfx('click'); socket.emit('challenge', {}, (res) => { if (!res.ok) alert(res.error); }); };
       const passBtn = document.createElement('button');
+      passBtn.className = 'secondary';
       passBtn.textContent = 'Pass';
-      passBtn.onclick = () => socket.emit('pass', {}, (res) => { if (!res.ok) alert(res.error); });
+      passBtn.onclick = () => { AudioFX.sfx('click'); socket.emit('pass', {}, (res) => { if (!res.ok) alert(res.error); }); };
       row.appendChild(challengeBtn);
       row.appendChild(passBtn);
       center.appendChild(row);
@@ -420,9 +484,9 @@ function buildGuardReactionUI() {
   }
 
   const declineBtn = document.createElement('button');
-  declineBtn.className = 'chip';
+  declineBtn.className = 'chip secondary';
   declineBtn.textContent = guardIndex !== -1 ? "Don't reveal — let it happen" : "You don't have Guard — continue";
-  declineBtn.onclick = () => socket.emit('guardReact', { reveal: false }, (res) => { if (!res.ok) alert(res.error); });
+  declineBtn.onclick = () => { AudioFX.sfx('click'); socket.emit('guardReact', { reveal: false }, (res) => { if (!res.ok) alert(res.error); }); };
   wrap.appendChild(declineBtn);
   return wrap;
 }
@@ -452,7 +516,7 @@ function buildClaimChipUI(pub) {
         chip.textContent = `${p.name} (🎟️${p.tickets})`;
         chip.disabled = disabled;
         if (S.selectedTarget === p.id) chip.classList.add('selected');
-        chip.onclick = () => { S.selectedTarget = p.id; render(); };
+        chip.onclick = () => { AudioFX.sfx('click'); S.selectedTarget = p.id; render(); };
         targetsDiv.appendChild(chip);
       });
       wrap.appendChild(targetsDiv);
@@ -471,6 +535,7 @@ function buildClaimChipUI(pub) {
     confirmBtn.textContent = `Claim ${meta.name}`;
     confirmBtn.disabled = (meta.needsTarget && !S.selectedTarget) || needsTicketWarning;
     confirmBtn.onclick = () => {
+      AudioFX.sfx('click');
       socket.emit('makeClaim', { character: S.selectedCharacter, targetId: S.selectedTarget }, (res) => {
         if (!res.ok) { alert(res.error); return; }
         S.selectedCharacter = null; S.selectedTarget = null;
@@ -500,8 +565,10 @@ function renderMyHand() {
     if (isInitialDeal) {
       card.classList.add('deal-in');
       card.style.animationDelay = (idx * 0.15) + 's';
+      setTimeout(() => AudioFX.sfx('deal'), idx * 150);
     } else if (S.prevHand[idx] && S.prevHand[idx] !== c) {
       card.classList.add('flip-swap');
+      AudioFX.sfx('flip');
     }
     handDiv.appendChild(card);
   });
@@ -542,4 +609,22 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ---------- Audio: unlock on first gesture (browser autoplay policy), mute toggle ----------
+function updateAudioBtn() { el('audio-toggle-btn').textContent = AudioFX.isMuted() ? '🔇' : '🔊'; }
+function unlockAudioOnce() {
+  AudioFX.ensureCtx();
+  if (!AudioFX.isMuted()) AudioFX.startAmbient();
+  updateAudioBtn();
+}
+document.addEventListener('pointerdown', unlockAudioOnce, { once: true });
+document.addEventListener('keydown', unlockAudioOnce, { once: true });
+el('audio-toggle-btn').addEventListener('click', () => {
+  AudioFX.ensureCtx();
+  const muted = AudioFX.toggleMuted();
+  if (!muted) { AudioFX.startAmbient(); AudioFX.sfx('click'); }
+  updateAudioBtn();
+});
+updateAudioBtn();
+
+startAmbientParticles();
 render();

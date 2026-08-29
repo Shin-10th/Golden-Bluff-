@@ -73,7 +73,7 @@
       </div>
 
       <div class="table-wrap">
-        <div class="table-ring">
+        <div class="table-ring" id="table-ring">
           <div class="seats-layer" id="seats-layer"></div>
           <div class="table-center" id="table-center"></div>
         </div>
@@ -117,10 +117,12 @@
 
 </div>
 
-<!-- Ephemeral effects layer (challenge flashes, confetti) - never wiped by normal renders -->
+<!-- Ephemeral effects layer (challenge flashes, confetti, embers) - never wiped by normal renders -->
 <div id="fx-layer"></div>
+<button id="audio-toggle-btn" class="icon-btn audio-toggle" title="Toggle music &amp; sound">🔊</button>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/icons.js"></script>
+<script src="/audio.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
