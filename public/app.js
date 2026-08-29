@@ -1,17 +1,18 @@
 // Golden Bluff - client. Plain JS, no build step, no frameworks.
 const CHARACTERS = {
-  ROYAL:     { name: 'Royal',     emoji: '👑', needsTarget: false, desc: 'Gain 2 Golden Tickets.' },
-  THIEF:     { name: 'Thief',     emoji: '🦹', needsTarget: true,  desc: 'Steal up to 2 Tickets from another player.' },
-  GUARD:     { name: 'Guard',     emoji: '🛡️', needsTarget: false, desc: 'Block the next ability targeting you, until your next turn.' },
-  SEER:      { name: 'Seer',      emoji: '🔮', needsTarget: true,  desc: "Secretly see one of another player's cards." },
-  TRICKSTER: { name: 'Trickster', emoji: '🎭', needsTarget: false, desc: 'Swap one of your cards for a new secret one.' },
-  ASSASSIN:  { name: 'Assassin',  emoji: '☠️', needsTarget: true,  desc: 'Pay 2 Tickets to force a discard.' },
+  ROYAL:     { name: 'Royal',     needsTarget: false, desc: 'Gain 2 Golden Tickets.' },
+  THIEF:     { name: 'Thief',     needsTarget: true,  desc: 'Steal up to 2 Tickets from another player.' },
+  GUARD:     { name: 'Guard',     needsTarget: false, desc: 'Block the next ability targeting you, until your next turn.' },
+  SEER:      { name: 'Seer',      needsTarget: true,  desc: "Secretly see one of another player's cards." },
+  TRICKSTER: { name: 'Trickster', needsTarget: false, desc: 'Swap one of your cards for a new secret one.' },
+  ASSASSIN:  { name: 'Assassin',  needsTarget: true,  desc: 'Pay 2 Tickets to force a discard.' },
 };
 const CONFETTI_COLORS = ['#c9a227', '#e8c14a', '#8a5fd1', '#4fa3c7', '#e05fa0', '#d4544a', '#6fd67f'];
 
 const socket = io();
 const el = (id) => document.getElementById(id);
 const charClass = (key) => `char-${key}`;
+const initials = (name) => (name || '?').trim().charAt(0).toUpperCase();
 
 const S = {
   screen: 'auth',       // auth | lobby | game
@@ -101,6 +102,10 @@ el('chat-form').addEventListener('submit', (e) => {
 
 el('seer-toast-close').addEventListener('click', () => { S.seerToast = null; render(); });
 
+// Slide-out drawer (activity log + table talk) keeps the table view uncluttered.
+el('drawer-toggle-btn').addEventListener('click', () => el('log-drawer').classList.remove('hidden'));
+el('drawer-close-btn').addEventListener('click', () => el('log-drawer').classList.add('hidden'));
+
 // ---------- Effects layer (survives normal re-renders) ----------
 function fxLayer() { return el('fx-layer'); }
 
@@ -182,42 +187,20 @@ function renderLobby() {
 
 function playerById(id) { return S.pub ? S.pub.players.find((p) => p.id === id) : null; }
 function prevPlayerById(id) { return S.prevPub ? S.prevPub.players.find((p) => p.id === id) : null; }
+function nameOf(pub, id) {
+  const p = pub.players.find((pl) => pl.id === id);
+  return p ? p.name : 'someone';
+}
 
 function renderGame() {
   const pub = S.pub;
   if (!pub) return;
   el('game-code').textContent = pub.code;
 
-  // Players grid
-  const grid = el('players-grid');
-  grid.innerHTML = '';
-  pub.players.forEach((p) => {
-    const prev = prevPlayerById(p.id);
-    const delta = prev ? p.tickets - prev.tickets : 0;
-    const justEliminated = prev && prev.alive && !p.alive;
-
-    const card = document.createElement('div');
-    card.className = 'player-card';
-    if (p.id === pub.activePlayerId) card.classList.add('is-turn');
-    if (p.id === S.myId) card.classList.add('is-me');
-    if (!p.alive) card.classList.add('is-dead');
-    if (justEliminated) card.classList.add('just-eliminated');
-
-    const pulseClass = delta > 0 ? 'pulse-gain' : (delta < 0 ? 'pulse-loss' : '');
-    const deltaHtml = delta !== 0
-      ? `<span class="ticket-delta ${delta > 0 ? 'gain' : 'loss'}">${delta > 0 ? '+' : ''}${delta}</span>`
-      : '';
-
-    card.innerHTML = `
-      <div class="p-name">${p.name}${p.id === S.myId ? ' <span class="badge">you</span>' : ''}${p.id === pub.activePlayerId ? ' <span class="badge">turn</span>' : ''}${p.protected ? ' 🛡️' : ''}${!p.connected ? ' <span class="badge">offline</span>' : ''}</div>
-      <div class="p-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</div>
-      <div class="p-cards">${p.alive ? '❤️'.repeat(p.cardCount) : '💀 eliminated'}</div>
-    `;
-    grid.appendChild(card);
-  });
-
+  renderSeats(pub);
+  renderTableCenter(pub);
+  renderChipBar(pub);
   renderMyHand();
-  renderActionArea(pub);
   renderLog(pub);
   renderChat();
 
@@ -235,67 +218,92 @@ function renderGame() {
   }
 }
 
-function renderMyHand() {
-  const handDiv = el('my-hand');
-  handDiv.innerHTML = '';
-  const isInitialDeal = S.prevHand.length === 0 && S.hand.length > 0;
+// Places every OTHER player around the top arc of the table ring; "you" live in the hand-fan below.
+function renderSeats(pub) {
+  const layer = el('seats-layer');
+  layer.innerHTML = '';
+  const others = pub.players.filter((p) => p.id !== S.myId);
+  const n = others.length;
 
-  S.hand.forEach((c, idx) => {
-    const meta = CHARACTERS[c];
-    const div = document.createElement('div');
-    div.className = `hand-card ${charClass(c)}`;
-    if (isInitialDeal) {
-      div.classList.add('deal-in');
-      div.style.animationDelay = (idx * 0.15) + 's';
-    } else if (S.prevHand[idx] && S.prevHand[idx] !== c) {
-      div.classList.add('flip-swap');
-    }
-    div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
-    handDiv.appendChild(div);
+  others.forEach((p, i) => {
+    const angleDeg = n === 1 ? 0 : -75 + (150 * i) / (n - 1);
+    const rad = (angleDeg * Math.PI) / 180;
+    const radiusPct = 46;
+    const leftPct = 50 + radiusPct * Math.sin(rad);
+    const topPct = 50 - radiusPct * Math.cos(rad);
+
+    const prev = prevPlayerById(p.id);
+    const delta = prev ? p.tickets - prev.tickets : 0;
+    const justEliminated = prev && prev.alive && !p.alive;
+    const pulseClass = delta > 0 ? 'pulse-gain' : delta < 0 ? 'pulse-loss' : '';
+    const deltaHtml = delta !== 0 ? `<span class="ticket-delta ${delta > 0 ? 'gain' : 'loss'}">${delta > 0 ? '+' : ''}${delta}</span>` : '';
+
+    const seat = document.createElement('div');
+    seat.className = 'seat';
+    if (p.id === pub.activePlayerId) seat.classList.add('is-turn');
+    if (!p.alive) seat.classList.add('is-dead');
+    if (justEliminated) seat.classList.add('just-eliminated');
+    seat.style.left = leftPct + '%';
+    seat.style.top = topPct + '%';
+    seat.innerHTML = `
+      <div class="seat-avatar">${p.alive ? initials(p.name) : '💀'}${p.protected ? '<span class="seat-shield">🛡️</span>' : ''}</div>
+      <div class="seat-name">${p.name}${!p.connected ? ' 💤' : ''}</div>
+      <div class="seat-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</div>
+      <div class="seat-hearts">${p.alive ? '❤️'.repeat(p.cardCount) : ''}</div>
+    `;
+    layer.appendChild(seat);
   });
-
-  S.prevHand = S.hand.slice();
 }
 
-function renderActionArea(pub) {
-  const area = el('action-area');
-  area.innerHTML = '';
-  area.classList.remove('action-fade');
-  // Force reflow so the fade-in animation replays every time content changes.
-  void area.offsetWidth;
-  area.classList.add('action-fade');
+function emblemEl() {
+  const div = document.createElement('div');
+  div.className = 'tc-emblem';
+  div.innerHTML = EMBLEM_SVG;
+  return div;
+}
 
+// The circular table centerpiece: whose turn/claim is live, and (when few enough) the react buttons.
+function renderTableCenter(pub) {
+  const center = el('table-center');
+  center.innerHTML = '';
   const isMyTurn = pub.activePlayerId === S.myId;
 
   if (pub.phase === 'claim') {
-    if (isMyTurn) {
-      area.appendChild(buildClaimUI(pub));
-    } else {
-      area.innerHTML = `<div class="action-banner">Waiting for ${nameOf(pub, pub.activePlayerId)} to make a claim...</div>`;
-    }
+    const status = document.createElement('div');
+    status.className = 'tc-status';
+    status.textContent = isMyTurn ? 'Your turn — choose a claim below' : `${nameOf(pub, pub.activePlayerId)}'s turn...`;
+    center.appendChild(status);
+    if (!isMyTurn) center.appendChild(emblemEl());
     return;
   }
 
   if (pub.phase === 'challengeWindow') {
     const c = pub.pendingClaim;
     const meta = CHARACTERS[c.character];
-    const targetTxt = c.targetId ? ` targeting ${nameOf(pub, c.targetId)}` : '';
-    const banner = document.createElement('div');
-    banner.className = `action-banner ${charClass(c.character)}`;
-    banner.innerHTML = `${nameOf(pub, c.claimantId)} claims <b style="color:var(--char-a)"><span class="c-icon-inline">${charIconHTML(c.character)}</span>${meta.name}</b>${targetTxt}.`;
-    area.appendChild(banner);
+    const targetTxt = c.targetId ? ` → ${nameOf(pub, c.targetId)}` : '';
+    const status = document.createElement('div');
+    status.className = `tc-status ${charClass(c.character)}`;
+    status.innerHTML = `<b>${nameOf(pub, c.claimantId)}</b> claims<br><span class="c-icon-inline">${charIconHTML(c.character)}</span><b style="color:var(--char-a)">${meta.name}</b>${targetTxt}`;
+    center.appendChild(status);
 
     if (c.claimantId === S.myId) {
       const p = document.createElement('div');
+      p.className = 'tc-status';
       p.textContent = 'Waiting to see if anyone challenges...';
-      area.appendChild(p);
+      center.appendChild(p);
     } else if (!c.eligible.includes(S.myId)) {
-      area.appendChild(document.createTextNode('You are out of this round.'));
+      const p = document.createElement('div');
+      p.className = 'tc-status';
+      p.textContent = "You're out of this round.";
+      center.appendChild(p);
     } else if (c.passed.includes(S.myId)) {
-      area.appendChild(document.createTextNode("You passed. Waiting for others..."));
+      const p = document.createElement('div');
+      p.className = 'tc-status';
+      p.textContent = 'You passed. Waiting for others...';
+      center.appendChild(p);
     } else {
       const row = document.createElement('div');
-      row.className = 'pending-actions';
+      row.className = 'tc-actions';
       const challengeBtn = document.createElement('button');
       challengeBtn.className = 'danger';
       challengeBtn.textContent = 'CHALLENGE!';
@@ -305,85 +313,78 @@ function renderActionArea(pub) {
       passBtn.onclick = () => socket.emit('pass', {}, (res) => { if (!res.ok) alert(res.error); });
       row.appendChild(challengeBtn);
       row.appendChild(passBtn);
-      area.appendChild(row);
+      center.appendChild(row);
     }
     return;
   }
 
   if (pub.phase === 'awaitingDiscard') {
     const d = pub.pendingDiscard;
-    const reasonText = {
-      lied: 'You were caught bluffing! Choose a Character to discard.',
-      lostChallenge: 'Your challenge was wrong! Choose a Character to discard.',
-      assassinated: 'You were targeted by the Assassin! Choose a Character to discard.',
-    }[d.reason] || 'Choose a Character to discard.';
-
-    if (d.playerId === S.myId) {
-      const banner = document.createElement('div');
-      banner.className = 'action-banner';
-      banner.textContent = reasonText;
-      area.appendChild(banner);
-      const row = document.createElement('div');
-      row.className = 'hand-cards';
-      S.hand.forEach((c, idx) => {
-        const meta = CHARACTERS[c];
-        const div = document.createElement('div');
-        div.className = `hand-card clickable ${charClass(c)}`;
-        div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
-        div.onclick = () => socket.emit('resolveDiscard', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
-        row.appendChild(div);
-      });
-      area.appendChild(row);
-    } else {
-      area.innerHTML = `<div class="action-banner">Waiting for ${nameOf(pub, d.playerId)} to choose a card to discard...</div>`;
-    }
+    const status = document.createElement('div');
+    status.className = 'tc-status';
+    status.textContent = d.playerId === S.myId ? 'Choose a card to discard below' : `${nameOf(pub, d.playerId)} is choosing a card to discard...`;
+    center.appendChild(status);
     return;
   }
 
   if (pub.phase === 'awaitingTrickster') {
     const t = pub.pendingTrickster;
-    if (t.claimantId === S.myId) {
-      const banner = document.createElement('div');
-      banner.className = 'action-banner';
-      banner.textContent = 'Choose which card to swap for a new secret one.';
-      area.appendChild(banner);
-      const row = document.createElement('div');
-      row.className = 'hand-cards';
-      S.hand.forEach((c, idx) => {
-        const meta = CHARACTERS[c];
-        const div = document.createElement('div');
-        div.className = `hand-card clickable ${charClass(c)}`;
-        div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
-        div.onclick = () => socket.emit('resolveTrickster', { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
-        row.appendChild(div);
-      });
-      area.appendChild(row);
-    } else {
-      area.innerHTML = `<div class="action-banner">Waiting for ${nameOf(pub, t.claimantId)} to choose a card to swap...</div>`;
-    }
+    const status = document.createElement('div');
+    status.className = 'tc-status';
+    status.textContent = t.claimantId === S.myId ? 'Choose a card to swap below' : `${nameOf(pub, t.claimantId)} is swapping a card...`;
+    center.appendChild(status);
     return;
   }
 
-  if (pub.phase === 'gameover') {
-    area.innerHTML = '';
-  }
+  center.appendChild(emblemEl());
 }
 
-function buildClaimUI(pub) {
-  const wrap = document.createElement('div');
-  const banner = document.createElement('div');
-  banner.className = 'action-banner';
-  banner.textContent = 'Your turn — choose a Character to claim (you may bluff):';
-  wrap.appendChild(banner);
+// The floating chip bar under the hand: claim picker, target picker, or a discard/swap choice.
+function renderChipBar(pub) {
+  const bar = el('chip-bar');
+  bar.innerHTML = '';
+  const isMyTurn = pub.activePlayerId === S.myId;
 
+  if (pub.phase === 'claim' && isMyTurn) {
+    bar.appendChild(buildClaimChipUI(pub));
+    return;
+  }
+  if (pub.phase === 'awaitingDiscard' && pub.pendingDiscard.playerId === S.myId) {
+    bar.appendChild(buildHandChoiceChips('resolveDiscard'));
+    return;
+  }
+  if (pub.phase === 'awaitingTrickster' && pub.pendingTrickster.claimantId === S.myId) {
+    bar.appendChild(buildHandChoiceChips('resolveTrickster'));
+    return;
+  }
+  // otherwise left empty; .chip-bar:empty is hidden via CSS
+}
+
+function buildHandChoiceChips(eventName) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chip-char-grid';
+  S.hand.forEach((c, idx) => {
+    const meta = CHARACTERS[c];
+    const chip = document.createElement('button');
+    chip.className = `chip ${charClass(c)}`;
+    chip.innerHTML = `<span class="c-icon-inline">${charIconHTML(c)}</span>${meta.name}`;
+    chip.onclick = () => socket.emit(eventName, { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); });
+    wrap.appendChild(chip);
+  });
+  return wrap;
+}
+
+function buildClaimChipUI(pub) {
+  const wrap = document.createElement('div');
   const grid = document.createElement('div');
-  grid.className = 'char-grid';
+  grid.className = 'chip-char-grid';
   Object.entries(CHARACTERS).forEach(([key, meta]) => {
-    const btn = document.createElement('button');
-    btn.className = `char-btn ${charClass(key)}` + (S.selectedCharacter === key ? ' selected' : '');
-    btn.innerHTML = `<span class="c-title"><span class="c-icon-inline">${charIconHTML(key)}</span>${meta.name}</span><span class="c-desc">${meta.desc}</span>`;
-    btn.onclick = () => { S.selectedCharacter = key; S.selectedTarget = null; render(); };
-    grid.appendChild(btn);
+    const chip = document.createElement('button');
+    chip.className = `chip ${charClass(key)}` + (S.selectedCharacter === key ? ' selected' : '');
+    chip.innerHTML = `<span class="c-icon-inline">${charIconHTML(key)}</span>${meta.name}`;
+    chip.title = meta.desc;
+    chip.onclick = () => { S.selectedCharacter = key; S.selectedTarget = null; render(); };
+    grid.appendChild(chip);
   });
   wrap.appendChild(grid);
 
@@ -392,15 +393,16 @@ function buildClaimUI(pub) {
     const meta = CHARACTERS[S.selectedCharacter];
     if (meta.needsTarget) {
       const targetsDiv = document.createElement('div');
-      targetsDiv.className = 'target-list';
+      targetsDiv.className = 'chip-char-grid';
       pub.players.filter((p) => p.alive && p.id !== S.myId).forEach((p) => {
         const disabled = S.selectedCharacter === 'THIEF' && p.tickets <= 0;
-        const btn = document.createElement('button');
-        btn.textContent = `${p.name} (🎟️${p.tickets})` + (disabled ? ' — no tickets' : '');
-        btn.disabled = disabled;
-        if (S.selectedTarget === p.id) btn.classList.add('primary');
-        btn.onclick = () => { S.selectedTarget = p.id; render(); };
-        targetsDiv.appendChild(btn);
+        const chip = document.createElement('button');
+        chip.className = 'chip';
+        chip.textContent = `${p.name} (🎟️${p.tickets})`;
+        chip.disabled = disabled;
+        if (S.selectedTarget === p.id) chip.classList.add('selected');
+        chip.onclick = () => { S.selectedTarget = p.id; render(); };
+        targetsDiv.appendChild(chip);
       });
       wrap.appendChild(targetsDiv);
     }
@@ -427,6 +429,36 @@ function buildClaimUI(pub) {
   }
 
   return wrap;
+}
+
+// Your hand, fanned out like held cards. Purely a display of what you hold — actions live in the chip bar.
+function renderMyHand() {
+  const handDiv = el('my-hand');
+  handDiv.innerHTML = '';
+  const isInitialDeal = S.prevHand.length === 0 && S.hand.length > 0;
+  const n = S.hand.length;
+
+  S.hand.forEach((c, idx) => {
+    const meta = CHARACTERS[c];
+    const div = document.createElement('div');
+    div.className = `fan-card ${charClass(c)}`;
+
+    let tilt = 0, xOffset = 0;
+    if (n === 2) { tilt = idx === 0 ? -9 : 9; xOffset = idx === 0 ? -46 : 46; }
+    div.style.setProperty('--fan-transform', `translateX(${xOffset}px) rotate(${tilt}deg)`);
+    div.style.zIndex = String(idx);
+
+    if (isInitialDeal) {
+      div.classList.add('deal-in');
+      div.style.animationDelay = (idx * 0.15) + 's';
+    } else if (S.prevHand[idx] && S.prevHand[idx] !== c) {
+      div.classList.add('flip-swap');
+    }
+    div.innerHTML = `<div class="c-icon">${charIconHTML(c)}</div><div class="c-name">${meta.name}</div>`;
+    handDiv.appendChild(div);
+  });
+
+  S.prevHand = S.hand.slice();
 }
 
 function renderLog(pub) {
@@ -458,10 +490,6 @@ function renderSeerToast() {
   el('seer-toast-body').className = charClass(S.seerToast.character);
 }
 
-function nameOf(pub, id) {
-  const p = pub.players.find((pl) => pl.id === id);
-  return p ? p.name : 'someone';
-}
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

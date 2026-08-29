@@ -46,3 +46,13 @@ const CHAR_ICON_SVG = {
 function charIconHTML(key) {
   return CHAR_ICON_SVG[key] || '';
 }
+
+// Decorative emblem shown at the table center when there is no active claim to react to.
+const EMBLEM_SVG = `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="6" y="20" width="52" height="28" rx="6" fill="currentColor"/>
+  <circle cx="6" cy="34" r="5" fill="var(--panel-2, #16110c)"/>
+  <circle cx="58" cy="34" r="5" fill="var(--panel-2, #16110c)"/>
+  <circle cx="32" cy="34" r="9" fill="var(--panel-2, #16110c)"/>
+  <path d="M28,29 L36,34 L28,39 Z" fill="currentColor"/>
+</svg>`;
+

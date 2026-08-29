@@ -57,34 +57,54 @@
 
   <!-- GAME SCREEN -->
   <div id="screen-game" class="hidden">
-    <div class="game-header">
-      <h2>🎟️ Golden Bluff</h2>
-      <span class="code-pill">Room <span id="game-code"></span></span>
+    <div class="table-scene">
+      <div class="scene-hill h2"></div>
+      <div class="scene-hill h1"></div>
+      <div class="scene-castle left">
+        <div class="tower t1"></div><div class="tower t2"></div><div class="tower t1"></div>
+      </div>
+      <div class="scene-castle right">
+        <div class="tower t1"></div><div class="tower t3"></div><div class="tower t1"></div>
+      </div>
+
+      <div class="top-bar">
+        <span class="code-pill">🎟️ Room <span id="game-code"></span></span>
+        <button id="drawer-toggle-btn" class="icon-btn" title="Activity log & table talk">📜</button>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-ring">
+          <div class="seats-layer" id="seats-layer"></div>
+          <div class="table-center" id="table-center"></div>
+        </div>
+      </div>
+
+      <div class="bottom-zone">
+        <div class="chip-bar" id="chip-bar"></div>
+        <div class="hand-fan" id="my-hand"></div>
+      </div>
     </div>
 
     <div id="winner-banner" class="winner-banner hidden"></div>
 
-    <div class="players-grid" id="players-grid"></div>
-
-    <div class="panel">
-      <h3>Your Characters</h3>
-      <div class="hand-cards" id="my-hand"></div>
-    </div>
-
-    <div class="panel" id="action-area"></div>
-
-    <div class="panel">
-      <h3>Activity Log</h3>
-      <div class="log-panel" id="game-log"></div>
-    </div>
-
-    <div class="panel">
-      <h3>Table Talk</h3>
-      <div class="chat-panel" id="chat-log"></div>
-      <form id="chat-form" class="chat-input-row">
-        <input type="text" id="chat-input" maxlength="200" placeholder="Say something (bluff freely)...">
-        <button type="submit">Send</button>
-      </form>
+    <!-- Slide-out drawer: activity log + table talk (keeps the table view uncluttered) -->
+    <div id="log-drawer" class="log-drawer hidden">
+      <div class="drawer-header">
+        <h3>Table</h3>
+        <button id="drawer-close-btn" class="icon-btn small">✕</button>
+      </div>
+      <div class="panel">
+        <h3>Activity Log</h3>
+        <div class="log-panel" id="game-log"></div>
+      </div>
+      <div class="panel">
+        <h3>Table Talk</h3>
+        <div class="chat-panel" id="chat-log"></div>
+        <form id="chat-form" class="chat-input-row">
+          <input type="text" id="chat-input" maxlength="200" placeholder="Say something (bluff freely)...">
+          <button type="submit">Send</button>
+        </form>
+      </div>
     </div>
   </div>
 
