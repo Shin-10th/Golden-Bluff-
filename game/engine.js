@@ -4,7 +4,7 @@
 // a small result descriptor; server.js is responsible for broadcasting.
 
 const CHARACTERS = {
-  ROYAL:     { name: 'Royal',     emoji: '👑', needsTarget: false, summary: 'Gain 2 Golden Tickets.' },
+  ROYAL:     { name: 'Royal',     emoji: '👑', needsTarget: false, summary: 'Gain 2 Golden Tickets — only 1 if a rival is also secretly holding a Royal.' },
   THIEF:     { name: 'Thief',     emoji: '🦹', needsTarget: true,  summary: 'Steal up to 2 Golden Tickets from another player.' },
   GUARD:     { name: 'Guard',     emoji: '🛡️', needsTarget: false, summary: "Not claimed on your turn. If you actually hold this card, you may reveal it the instant someone targets you with Thief, Seer, or Assassin, blocking that ability outright." },
   SEER:      { name: 'Seer',      emoji: '🔮', needsTarget: true,  summary: "Look at one of another player's Character cards — they choose which one to show you." },
@@ -307,8 +307,14 @@ function applyAbilityEffect(room, claimantId, character, targetId) {
 
   switch (character) {
     case 'ROYAL': {
-      claimant.tickets += 2;
-      log(room, `${claimant.name} gains 2 🎟️ from Royal.`);
+      // Balance rule: Royal is worth less when a rival is actually sitting on one too —
+      // checked against real hidden hands, never revealed to anyone as a result.
+      const rivalHasRoyal = alivePlayers(room).some((p) => p.id !== claimant.id && p.hand.includes('ROYAL'));
+      const amount = rivalHasRoyal ? 1 : 2;
+      claimant.tickets += amount;
+      log(room, rivalHasRoyal
+        ? `${claimant.name} gains only 1 🎟️ from Royal — another Royal is already in play.`
+        : `${claimant.name} gains 2 🎟️ from Royal.`);
       return true;
     }
     case 'TRICKSTER': {

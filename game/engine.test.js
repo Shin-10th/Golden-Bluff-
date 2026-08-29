@@ -78,6 +78,7 @@ test('truthful non-targeted claim (Royal) survives challenge: challenger discard
   forceTurn(room, 0);
   setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
   setHand(room, 'Bob', ['THIEF', 'SEER']);
+  setHand(room, 'Cara', ['THIEF', 'GUARD']); // fixed so no rival Royal skews the payout below
   const alice = byName(room, 'Alice');
   const bob = byName(room, 'Bob');
   alice.tickets = 2;
@@ -276,6 +277,56 @@ test('cannot claim assassin without at least 2 tickets', () => {
   byName(room, 'Alice').tickets = 1;
   const res = engine.makeClaim(room, 'p0', 'ASSASSIN', 'p1');
   assert.strictEqual(res.ok, false);
+});
+
+test('royal payout stays 2 tickets when no rival secretly holds a Royal', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  alice.tickets = 3;
+  setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
+  setHand(room, 'Bob', ['THIEF', 'SEER']);
+  setHand(room, 'Cara', ['GUARD', 'ASSASSIN']);
+
+  engine.makeClaim(room, 'p0', 'ROYAL', null);
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+
+  assert.strictEqual(alice.tickets, 5, 'full +2, nobody else holds a Royal');
+});
+
+test('royal payout drops to 1 ticket when a rival secretly holds a Royal', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  alice.tickets = 3;
+  setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
+  setHand(room, 'Bob', ['ROYAL', 'SEER']); // a rival secretly holds Royal too
+  setHand(room, 'Cara', ['THIEF', 'GUARD']);
+
+  engine.makeClaim(room, 'p0', 'ROYAL', null);
+  engine.pass(room, 'p1');
+  engine.pass(room, 'p2');
+
+  assert.strictEqual(alice.tickets, 4, 'only +1 because a rival secretly holds a Royal too');
+});
+
+test('royal payout ignores an eliminated player who happened to hold a Royal', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  const bob = byName(room, 'Bob');
+  alice.tickets = 3;
+  setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
+  setHand(room, 'Bob', []); // already eliminated, hand empty regardless of past cards
+  bob.alive = false;
+  bob.tickets = 0;
+  setHand(room, 'Cara', ['THIEF', 'GUARD']);
+
+  engine.makeClaim(room, 'p0', 'ROYAL', null);
+  engine.pass(room, 'p2'); // Bob is dead, only Cara can act
+
+  assert.strictEqual(alice.tickets, 5, 'full +2, the eliminated player does not count as a rival');
 });
 
 console.log(`\n${passCount} test(s) passed.`);

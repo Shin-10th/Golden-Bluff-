@@ -1,6 +1,6 @@
 // Golden Bluff - client. Plain JS, no build step, no frameworks.
 const CHARACTERS = {
-  ROYAL:     { name: 'Royal',     needsTarget: false, desc: 'Take your turn to claim it and gain 2 Golden Tickets.' },
+  ROYAL:     { name: 'Royal',     needsTarget: false, desc: 'Gain 2 Golden Tickets — only 1 if a rival is secretly holding a Royal too.' },
   THIEF:     { name: 'Thief',     needsTarget: true,  desc: 'Steal up to 2 Golden Tickets from another player.' },
   GUARD:     { name: 'Guard',     needsTarget: false, desc: "Never claimed on your turn — if you hold it, reveal it the instant you're targeted to block that ability." },
   SEER:      { name: 'Seer',      needsTarget: true,  desc: "Look at one of another player's cards — they choose which one to show you." },
@@ -173,7 +173,7 @@ function reactToNewLogEntries(prevPub, pub) {
     else if (/wins with/.test(t)) AudioFX.sfx('win');
     else if (/is eliminated/.test(t)) AudioFX.sfx('defeat');
     else if (/claims/.test(t)) AudioFX.sfx('claim');
-    else if (/steals|gains 2 🎟️ from Royal|for the correct challenge|for winning the challenge|Stable Income/.test(t)) AudioFX.sfx('coin');
+    else if (/steals|from Royal|for the correct challenge|for winning the challenge|Stable Income/.test(t)) AudioFX.sfx('coin');
     else if (/discards|pays 2 🎟️/.test(t)) AudioFX.sfx('loss');
   });
 }
@@ -282,6 +282,7 @@ function renderGame() {
   el('table-ring').classList.toggle('my-turn', pub.activePlayerId === S.myId && pub.phase !== 'gameover');
 
   renderSeats(pub);
+  renderMyStats(pub);
   renderTableCenter(pub);
   renderChipBar(pub);
   renderMyHand();
@@ -338,6 +339,19 @@ function renderSeats(pub) {
     `;
     layer.appendChild(seat);
   });
+}
+
+// Your own ticket count — you're excluded from the seats layer, so this is
+// the only place your own tickets are shown. Same delta pulse as everyone else.
+function renderMyStats(pub) {
+  const wrap = el('my-stats');
+  const me = playerById(S.myId);
+  if (!me) { wrap.innerHTML = ''; return; }
+  const prev = prevPlayerById(S.myId);
+  const delta = prev ? me.tickets - prev.tickets : 0;
+  const pulseClass = delta > 0 ? 'pulse-gain' : delta < 0 ? 'pulse-loss' : '';
+  const deltaHtml = delta !== 0 ? `<span class="ticket-delta ${delta > 0 ? 'gain' : 'loss'}">${delta > 0 ? '+' : ''}${delta}</span>` : '';
+  wrap.innerHTML = `<span class="my-tickets ${pulseClass}">🎟️ ${me.tickets}${deltaHtml}</span>`;
 }
 
 function emblemEl() {
