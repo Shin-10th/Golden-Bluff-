@@ -90,6 +90,7 @@ socket.on('connect', () => { S.myId = socket.id; });
 socket.on('state', (pub) => {
   maybeFlashChallenge(S.pub, pub);
   reactToNewLogEntries(S.pub, pub);
+  reactToTicketDeltas(S.pub, pub);
   S.prevPub = S.pub;
   S.pub = pub;
   if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
@@ -189,6 +190,7 @@ function reactToNewLogEntries(prevPub, pub) {
   if (!pub || !pub.log) return;
   const prevLast = prevPub && prevPub.log && prevPub.log.length ? prevPub.log[prevPub.log.length - 1].ts : 0;
   const newEntries = pub.log.filter((e) => e.ts > prevLast);
+  const deck = el('pile-deck');
   newEntries.forEach((e) => {
     const t = e.text;
     if (/reveals GUARD and blocks/.test(t)) { AudioFX.sfx('shield'); spawnGuardFlash(t); }
@@ -199,7 +201,40 @@ function reactToNewLogEntries(prevPub, pub) {
     else if (/claims/.test(t)) AudioFX.sfx('claim');
     else if (/steals|from Royal|for the correct challenge|for winning the challenge|Stable Income/.test(t)) AudioFX.sfx('coin');
     else if (/discards|pays 2 🎟️/.test(t)) AudioFX.sfx('loss');
+
+    // --- Card-pile animations: only for events the rules already make public. ---
+    // Guard block: the blocker's GUARD flies face-up to the deck (it's genuinely revealed).
+    const guardMatch = t.match(/^🛡️ (.+?) reveals GUARD and blocks/);
+    if (guardMatch) {
+      const id = idByName(pub, guardMatch[1]);
+      if (id) flyCard(playerAnchor(id), deck, 'GUARD');
+    }
+    // Truthful claim survives a challenge: the claimed character flies face-up to the deck.
+    // pub.pendingClaim still holds this exact claim (status 'challenged') at this broadcast.
+    if (/— the claim was true!/.test(t) && pub.pendingClaim && pub.pendingClaim.character) {
+      flyCard(playerAnchor(pub.pendingClaim.claimantId), deck, pub.pendingClaim.character);
+    }
+    // Any discard is always face-up per the rules (bluffed, lost a challenge, or assassinated).
+    const discardMatch = t.match(/^(.+?) discards .+? (\w+)\.$/);
+    if (discardMatch) {
+      const id = idByName(pub, discardMatch[1]);
+      const key = NAME_TO_KEY[discardMatch[2]];
+      if (id) flyCard(playerAnchor(id), deck, key || null);
+    }
+    // Generic "revealed card shuffled back, draw a replacement" — shared by Guard's redraw,
+    // a truthful claimant's redraw, AND Trickster's own hidden swap. The new card is always
+    // secret, so this is always a face-down flight from the deck — never names a character.
+    const redrawMatch = t.match(/^(.+?)'s revealed card is shuffled back into the deck/);
+    if (redrawMatch) {
+      const id = idByName(pub, redrawMatch[1]);
+      if (id) flyCard(deck, playerAnchor(id), null);
+    }
   });
+}
+
+function idByName(pub, name) {
+  const p = pub.players.find((pl) => pl.name === name);
+  return p ? p.id : null;
 }
 
 function spawnGuardFlash(logText) {
@@ -248,6 +283,99 @@ function spawnConfetti() {
     layer.appendChild(piece);
     setTimeout(() => piece.remove(), (delay + duration) * 1000 + 200);
   }
+}
+
+// ---------- Flying pile animations (bank <-> player tickets, deck <-> player cards) ----------
+// Positions are computed live from real DOM rects (getBoundingClientRect), not hard-coded,
+// since seats/piles move around with viewport size. Skips entirely under reduced-motion,
+// since the ticket-delta popup and activity log already convey the same information.
+const PREFERS_REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+const NAME_TO_KEY = Object.fromEntries(Object.entries(CHARACTERS).map(([k, m]) => [m.name, k]));
+
+function centerOf(node) {
+  const r = node.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+// The on-screen anchor for a player: their seat in the ring, or your own hand/stats.
+function playerAnchor(playerId) {
+  if (!playerId) return null;
+  if (playerId === S.myId) return el('my-hand') || el('my-stats');
+  const layer = el('seats-layer');
+  return layer && layer.querySelector(`[data-player-id="${CSS.escape(playerId)}"]`);
+}
+
+// One "coin" flying from one anchor to another.
+function flyToken(fromNode, toNode, delayMs) {
+  if (PREFERS_REDUCED_MOTION || !fromNode || !toNode) return;
+  const from = centerOf(fromNode);
+  const to = centerOf(toNode);
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const token = document.createElement('div');
+  token.className = 'flying-token';
+  token.textContent = '🎟️';
+  token.style.left = from.x + 'px';
+  token.style.top = from.y + 'px';
+  fxLayer().appendChild(token);
+  const anim = token.animate(
+    [
+      { transform: 'translate(-50%,-50%) scale(0.6)', opacity: 0 },
+      { transform: `translate(calc(-50% + ${dx * 0.5}px), calc(-50% + ${dy * 0.5 - 40}px)) scale(1.2)`, opacity: 1, offset: 0.55 },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0.75)`, opacity: 0 },
+    ],
+    { duration: 650, delay: delayMs || 0, easing: 'ease-in-out' }
+  );
+  anim.onfinish = () => token.remove();
+}
+
+// A little burst of 1-3 tokens so a +2 reads differently from a +1, without spamming the screen.
+function flyTicketBurst(fromNode, toNode, count) {
+  const n = Math.max(1, Math.min(3, Math.abs(count)));
+  for (let i = 0; i < n; i++) flyToken(fromNode, toNode, i * 110);
+}
+
+// One character card flying between the deck pile and a player. `key` shows the character
+// face-up; omit it (null/undefined) for a face-down "mystery" card — always used for anything
+// that isn't already public per the rules (a fresh draw, Seer's peek, Trickster's own swap).
+function flyCard(fromNode, toNode, key) {
+  if (PREFERS_REDUCED_MOTION || !fromNode || !toNode) return;
+  const from = centerOf(fromNode);
+  const to = centerOf(toNode);
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const card = document.createElement('div');
+  card.className = 'flying-card' + (key ? ` ${charClass(key)} face-up` : ' face-down');
+  card.innerHTML = key ? `<span class="fc-icon">${charIconHTML(key)}</span>` : '<span class="fc-back">🎴</span>';
+  card.style.left = from.x + 'px';
+  card.style.top = from.y + 'px';
+  fxLayer().appendChild(card);
+  const anim = card.animate(
+    [
+      { transform: 'translate(-50%,-50%) rotate(0deg) scale(0.55)', opacity: 0 },
+      { transform: `translate(calc(-50% + ${dx * 0.5}px), calc(-50% + ${dy * 0.5 - 30}px)) rotate(10deg) scale(1.08)`, opacity: 1, offset: 0.5 },
+      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) rotate(0deg) scale(0.7)`, opacity: 0 },
+    ],
+    { duration: 700, easing: 'ease-in-out' }
+  );
+  anim.onfinish = () => card.remove();
+}
+
+// Any change in a player's ticket count flies coins to/from the bank pile — Stable Income,
+// Royal, challenge rewards, an Assassin's 2-ticket cost, an elimination's tickets-to-supply,
+// and a Thief's steal (shown as two bank flights rather than a direct player-to-player one,
+// which keeps this one generic rule covering every ticket-moving ability).
+function reactToTicketDeltas(prevPub, pub) {
+  if (!prevPub || !pub) return;
+  const bank = el('pile-bank');
+  pub.players.forEach((p) => {
+    const prev = prevPub.players.find((pp) => pp.id === p.id);
+    if (!prev) return;
+    const delta = p.tickets - prev.tickets;
+    if (delta === 0) return;
+    const anchor = playerAnchor(p.id);
+    if (!anchor) return;
+    if (delta > 0) flyTicketBurst(bank, anchor, delta);
+    else flyTicketBurst(anchor, bank, delta);
+  });
 }
 
 // ---------- Render ----------
@@ -350,6 +478,7 @@ function renderSeats(pub) {
 
     const seat = document.createElement('div');
     seat.className = 'seat';
+    seat.dataset.playerId = p.id;
     if (p.id === pub.activePlayerId) seat.classList.add('is-turn');
     if (!p.alive) seat.classList.add('is-dead');
     if (justEliminated) seat.classList.add('just-eliminated');

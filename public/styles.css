@@ -378,6 +378,40 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   50% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), 0 0 60px 12px rgba(212,175,55,0.65); }
 }
 .seats-layer { position: absolute; inset: 0; }
+
+/* Bank (ticket supply) and Deck (character supply) piles — fixed props sitting
+   in the ring's bottom arc, which is otherwise empty (seats only occupy the
+   top arc; "you" live in the hand-fan below). Flying-ticket/flying-card
+   animations use these as their bank/deck endpoint. */
+.pile {
+  position: absolute; top: 83%; transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; z-index: 2; pointer-events: none;
+}
+.pile-bank { left: 31%; }
+.pile-deck { left: 69%; }
+.pile-label {
+  font-family: 'Cinzel', serif; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--gold-bright); text-shadow: 0 1px 3px rgba(0,0,0,0.85); margin-top: 0.15rem;
+}
+.pile-coins { position: relative; width: 38px; height: 30px; }
+.pile-coins .coin {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: 32px; height: 12px; border-radius: 50%;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  border: 1px solid var(--gold-dim); box-shadow: 0 2px 4px rgba(0,0,0,0.45);
+}
+.pile-coins .coin:nth-child(1) { bottom: 0; }
+.pile-coins .coin:nth-child(2) { bottom: 6px; }
+.pile-coins .coin:nth-child(3) { bottom: 12px; }
+.pile-cards { position: relative; width: 30px; height: 38px; }
+.pile-cards .pc {
+  position: absolute; inset: 0; border-radius: 4px; border: 1.5px solid var(--gold);
+  background: linear-gradient(160deg, var(--panel-3), var(--panel-2));
+  box-shadow: 0 2px 5px rgba(0,0,0,0.45);
+}
+.pile-cards .pc:nth-child(1) { transform: rotate(-7deg) translateY(2px); }
+.pile-cards .pc:nth-child(2) { transform: rotate(4deg) translateY(1px); }
+.pile-cards .pc:nth-child(3) { transform: rotate(-1deg); }
 .seat {
   position: absolute; top: 0; left: 0; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 0.2rem; width: 84px;
@@ -587,6 +621,31 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   color: var(--accent-cool-bright); text-shadow: 0 0 24px rgba(95,179,217,0.9), 0 0 60px rgba(95,179,217,0.5);
 }
 .guard-flash .gf-sub { font-size: 1rem; color: var(--text); text-shadow: 0 2px 8px rgba(0,0,0,0.8); margin-top: 0.3rem; }
+
+/* ================= Flying tickets & cards (bank/deck <-> player, fx-layer) =================
+   Positioned in px by JS (getBoundingClientRect deltas) against fx-layer's fixed inset:0 box,
+   then animated purely with the Web Animations API since start/end points are dynamic per-event. */
+.flying-token {
+  position: absolute; top: 0; left: 0; font-size: 1.4rem; line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)) drop-shadow(0 0 10px rgba(212,175,55,0.6));
+  will-change: transform, opacity;
+}
+.flying-card {
+  position: absolute; top: 0; left: 0; width: 34px; height: 48px;
+  border-radius: 6px; display: flex; align-items: center; justify-content: center;
+  will-change: transform, opacity;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.55);
+}
+.flying-card.face-up {
+  background: radial-gradient(circle at 50% 35%, var(--char-b, var(--panel)), rgba(0,0,0,0.4) 85%);
+  border: 2px solid var(--char-a, var(--gold));
+}
+.flying-card.face-up .fc-icon { width: 20px; height: 20px; color: var(--char-a, var(--gold)); filter: drop-shadow(0 0 6px var(--char-glow, transparent)); }
+.flying-card.face-down {
+  background: linear-gradient(160deg, var(--gold-dim), #2a2016);
+  border: 2px solid var(--gold);
+}
+.flying-card.face-down .fc-back { font-size: 1.1rem; opacity: 0.85; }
 
 /* ================= Audio toggle ================= */
 .audio-toggle {
