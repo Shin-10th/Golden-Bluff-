@@ -9,6 +9,19 @@ const CHARACTERS = {
 };
 const CLAIMABLE_KEYS = Object.keys(CHARACTERS).filter((k) => k !== 'GUARD');
 const CONFETTI_COLORS = ['#c9a227', '#e8c14a', '#8a5fd1', '#4fa3c7', '#e05fa0', '#d4544a', '#6fd67f'];
+const CHARACTER_ORDER = Object.keys(CHARACTERS);
+
+// Card-number footer, e.g. "03/06" — purely flavour, mirrors a TCG's print number.
+function cardNumber(key) {
+  const idx = CHARACTER_ORDER.indexOf(key) + 1;
+  return `${String(idx).padStart(2, '0')}/${String(CHARACTER_ORDER.length).padStart(2, '0')}`;
+}
+// Guard-interaction note for the card footer — genuinely useful, not just flavour.
+function guardNote(key) {
+  if (key === 'GUARD') return 'Blocks Thief · Seer · Assassin';
+  if (CHARACTERS[key].needsTarget) return 'Countered by Guard';
+  return 'Unblockable by Guard';
+}
 
 const socket = io();
 const el = (id) => document.getElementById(id);
@@ -44,10 +57,21 @@ function buildCharCard(key, opts = {}) {
   if (opts.hand) cls += ' char-card--hand fan-card';
   if (opts.disabled) cls += ' disabled';
   card.className = cls;
+
+  const desc = opts.descOverride || meta.desc;
+  const bodyHtml = opts.hand
+    ? `<div class="cc-ability"><div class="cc-ability-label">Ability</div><div class="cc-desc">${desc}</div></div>
+       <div class="cc-footer"><span class="cc-guard-note">🛡️ ${guardNote(key)}</span><span class="cc-number">${cardNumber(key)}</span></div>`
+    : `<div class="cc-desc">${desc}</div>`;
+
   card.innerHTML = `
-    <div class="c-icon">${charIconHTML(key)}</div>
+    <div class="cc-header">
+      <span class="cc-count">×3</span>
+      <span class="cc-icon-badge">${charIconHTML(key)}</span>
+    </div>
+    <div class="cc-art"><div class="cc-art-icon">${charIconHTML(key)}</div></div>
     <div class="c-name">${meta.name}</div>
-    <div class="c-desc">${opts.descOverride || meta.desc}</div>
+    ${bodyHtml}
   `;
   if (opts.onClick && !opts.disabled) {
     card.onclick = () => { AudioFX.sfx('click'); opts.onClick(); };
@@ -571,9 +595,15 @@ function renderMyHand() {
   S.hand.forEach((c, idx) => {
     const card = buildCharCard(c, { hand: true });
 
-    let tilt = 0, xOffset = 0;
-    if (n === 2) { tilt = idx === 0 ? -9 : 9; xOffset = idx === 0 ? -58 : 58; }
-    card.style.setProperty('--fan-transform', `translateX(${xOffset}px) rotate(${tilt}deg)`);
+    // Cards sit in normal flex flow (not absolutely positioned) so the row
+    // centers reliably at any hand size; a small rotation from the bottom
+    // pivot plus a negative margin for overlap gives the "fanned in hand" look.
+    let tilt = 0;
+    if (n === 2) {
+      tilt = idx === 0 ? -6 : 6;
+      if (idx === 1) card.style.marginLeft = '-56px';
+    }
+    card.style.setProperty('--fan-transform', `rotate(${tilt}deg)`);
     card.style.zIndex = String(idx);
 
     if (isInitialDeal) {
