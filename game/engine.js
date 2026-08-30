@@ -46,7 +46,7 @@ function createRoom(code, rng = Math.random) {
     discardPile: [],
     turnIndex: -1,
     activePlayerId: null,
-    pendingClaim: null,         // { claimantId, character, targetId, passed:Set, challengerId, status }
+    pendingClaim: null,         // { claimantId, character, targetId, passed:Set, challengerId, status, royalCounterFor? }
     pendingGuardReaction: null, // { claimantId, character, targetId }
     pendingSeerChoice: null,    // { seerId, targetId }
     pendingDiscard: null,       // { playerId, reason, continuation }
@@ -230,6 +230,35 @@ function pass(room, playerId) {
   return { ok: true };
 }
 
+// Instead of the amount being silently checked against hidden hands, a rival can
+// speak up: "I'm also a Royal." That claim goes through the exact same pass/challenge
+// flow as any other (it can be bluffed, and it can be called out) — it just resolves
+// differently: nobody gains the normal Royal ability from it, it only decides whether
+// the ORIGINAL claimant's payout is capped at 1 (counter stands) or stays at 2 (counter
+// is disproven). Only one counter-claim is allowed per Royal claim (no chaining).
+function claimRoyalToo(room, playerId) {
+  const c = room.pendingClaim;
+  if (room.phase !== 'challengeWindow' || !c || c.status !== 'open') {
+    return { ok: false, error: 'No Royal claim to respond to.' };
+  }
+  if (c.character !== 'ROYAL') return { ok: false, error: 'Only a Royal claim can be countered this way.' };
+  if (c.royalCounterFor) return { ok: false, error: 'This claim is already a counter-claim.' };
+  if (playerId === c.claimantId) return { ok: false, error: 'You cannot counter your own claim.' };
+  if (!eligibleChallengers(room).includes(playerId)) return { ok: false, error: 'You cannot act on this claim.' };
+
+  const counter = getPlayer(room, playerId);
+  log(room, `${counter.name} claims to also be a 👑 Royal!`);
+
+  room.pendingClaim = {
+    claimantId: playerId, character: 'ROYAL', targetId: null,
+    passed: new Set(), challengerId: null, status: 'open',
+    royalCounterFor: c.claimantId,
+  };
+  // Phase stays 'challengeWindow' — the counter-claim is challenged or passed on exactly
+  // like any other claim; only the resolution (below) treats it specially.
+  return { ok: true };
+}
+
 function challenge(room, challengerId) {
   const c = room.pendingClaim;
   if (room.phase !== 'challengeWindow' || !c || c.status !== 'open') return { ok: false, error: 'No claim to challenge.' };
@@ -249,7 +278,7 @@ function challenge(room, challengerId) {
     challenger.tickets += 1;
     log(room, `${claimant.name} was bluffing! ${meta.name} claim cancelled. ${challenger.name} gains 1 🎟️ for the correct challenge.`);
     room.phase = 'awaitingDiscard';
-    room.pendingDiscard = { playerId: c.claimantId, reason: 'lied' };
+    room.pendingDiscard = { playerId: c.claimantId, reason: 'lied', royalCounterFor: c.royalCounterFor || null };
     return { ok: true, truthful: false };
   } else {
     claimant.tickets += 1;
@@ -258,19 +287,38 @@ function challenge(room, challengerId) {
     room.pendingDiscard = {
       playerId: challengerId,
       reason: 'lostChallenge',
-      continuation: { claimantId: c.claimantId, character: c.character, targetId: c.targetId },
+      continuation: { claimantId: c.claimantId, character: c.character, targetId: c.targetId, royalCounterFor: c.royalCounterFor || null },
     };
     return { ok: true, truthful: true };
   }
+}
+
+// A Royal counter-claim ("I'm also a Royal") was disproven or upheld — apply the
+// deferred effect on the ORIGINAL claimant's payout instead of the normal ability effect.
+function settleRoyalCounter(room, originalClaimantId, counterSurvived) {
+  const original = getPlayer(room, originalClaimantId);
+  if (!original || !original.alive) { checkWinOrAdvance(room); return; }
+  if (counterSurvived) {
+    original.tickets += 1;
+    log(room, `${original.name}'s Royal only pays out 1 🎟️ — a rival's Royal claim stood.`);
+  } else {
+    original.tickets += 2;
+    log(room, `${original.name}'s Royal pays out the full 2 🎟️ — the rival's counter-claim didn't hold up.`);
+  }
+  checkWinOrAdvance(room);
 }
 
 function resolveUnchallenged(room) {
   if (room.phase !== 'challengeWindow') return;
   const c = room.pendingClaim;
   if (!c) return;
-  const { claimantId, character, targetId } = c;
+  const { claimantId, character, targetId, royalCounterFor } = c;
   room.pendingClaim = null;
   log(room, `Nobody challenged. The claim happens.`);
+  if (royalCounterFor) {
+    settleRoyalCounter(room, royalCounterFor, true);
+    return;
+  }
   const resolved = applyAbilityEffect(room, claimantId, character, targetId);
   if (resolved) checkWinOrAdvance(room);
 }
@@ -307,14 +355,11 @@ function applyAbilityEffect(room, claimantId, character, targetId) {
 
   switch (character) {
     case 'ROYAL': {
-      // Balance rule: Royal is worth less when a rival is actually sitting on one too —
-      // checked against real hidden hands, never revealed to anyone as a result.
-      const rivalHasRoyal = alivePlayers(room).some((p) => p.id !== claimant.id && p.hand.includes('ROYAL'));
-      const amount = rivalHasRoyal ? 1 : 2;
-      claimant.tickets += amount;
-      log(room, rivalHasRoyal
-        ? `${claimant.name} gains only 1 🎟️ from Royal — another Royal is already in play.`
-        : `${claimant.name} gains 2 🎟️ from Royal.`);
+      // Full payout unless a rival publicly counters with their own "I'm also a Royal"
+      // claim (see claimRoyalToo) — that reduction is applied separately, once the
+      // counter-claim itself resolves, not silently checked against hidden hands here.
+      claimant.tickets += 2;
+      log(room, `${claimant.name} gains 2 🎟️ from Royal.`);
       return true;
     }
     case 'TRICKSTER': {
@@ -432,27 +477,34 @@ function resolveDiscard(room, playerId, cardIndex) {
   const player = getPlayer(room, playerId);
   if (cardIndex < 0 || cardIndex >= player.hand.length) return { ok: false, error: 'Invalid card.' };
 
-  const { reason, continuation } = room.pendingDiscard;
+  const { reason, continuation, royalCounterFor } = room.pendingDiscard;
   const discarded = player.hand.splice(cardIndex, 1)[0];
   room.discardPile.push(discarded);
   log(room, `${player.name} discards ${CHARACTERS[discarded].emoji} ${CHARACTERS[discarded].name}.`);
   eliminateIfNeeded(room, player);
   room.pendingDiscard = null;
 
-  if (reason === 'lied' || reason === 'assassinated') {
+  if (reason === 'lied') {
+    // If this losing claim was itself a Royal counter-claim, its disproof means the
+    // ORIGINAL Royal claim it was contesting pays out in full after all.
+    if (royalCounterFor) { settleRoyalCounter(room, royalCounterFor, false); return { ok: true }; }
+    checkWinOrAdvance(room);
+    return { ok: true };
+  }
+  if (reason === 'assassinated') {
     checkWinOrAdvance(room);
     return { ok: true };
   }
   if (reason === 'lostChallenge') {
-    const { claimantId, character, targetId } = continuation;
+    const { claimantId, character, targetId, royalCounterFor: counterFor } = continuation;
     const claimant = getPlayer(room, claimantId);
-    if (claimant.alive) {
-      revealReturnShuffleDraw(room, claimantId, character);
-      const resolved = applyAbilityEffect(room, claimantId, character, targetId);
-      if (resolved) checkWinOrAdvance(room);
-    } else {
-      checkWinOrAdvance(room);
-    }
+    if (!claimant.alive) { checkWinOrAdvance(room); return { ok: true }; }
+    revealReturnShuffleDraw(room, claimantId, character);
+    // A truthful Royal counter-claim doesn't grant the counter-claimant their own Royal
+    // bonus — it only confirms the original claimant's payout gets capped at 1.
+    if (counterFor) { settleRoyalCounter(room, counterFor, true); return { ok: true }; }
+    const resolved = applyAbilityEffect(room, claimantId, character, targetId);
+    if (resolved) checkWinOrAdvance(room);
     return { ok: true };
   }
   return { ok: true };
@@ -490,6 +542,7 @@ function serializePublicState(room) {
       status: room.pendingClaim.status,
       passed: [...room.pendingClaim.passed],
       eligible: eligibleChallengers(room),
+      royalCounterFor: room.pendingClaim.royalCounterFor || null,
     } : null,
     pendingGuardReaction: room.pendingGuardReaction ? {
       claimantId: room.pendingGuardReaction.claimantId,
@@ -514,7 +567,7 @@ function serializePrivateHand(room, playerId) {
 module.exports = {
   CHARACTERS, CHARACTER_KEYS, CLAIMABLE_CHARACTER_KEYS, MIN_PLAYERS, MAX_PLAYERS, WINNING_TICKETS,
   createRoom, addPlayer, removePlayer, canStart, startGame,
-  makeClaim, pass, challenge, resolveUnchallenged,
+  makeClaim, pass, challenge, claimRoyalToo, resolveUnchallenged,
   resolveGuardReaction, resolveSeerChoice, resolveDiscard, resolveTrickster,
   serializePublicState, serializePrivateHand, getPlayer, alivePlayers,
 };

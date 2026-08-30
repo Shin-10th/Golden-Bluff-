@@ -295,38 +295,112 @@ test('royal payout stays 2 tickets when no rival secretly holds a Royal', () => 
   assert.strictEqual(alice.tickets, 5, 'full +2, nobody else holds a Royal');
 });
 
-test('royal payout drops to 1 ticket when a rival secretly holds a Royal', () => {
+test('a silent rival no longer auto-reduces Royal — only a spoken counter-claim does', () => {
   const room = freshRoom(['Alice', 'Bob', 'Cara']);
   forceTurn(room, 0);
   const alice = byName(room, 'Alice');
   alice.tickets = 3;
   setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
-  setHand(room, 'Bob', ['ROYAL', 'SEER']); // a rival secretly holds Royal too
+  setHand(room, 'Bob', ['ROYAL', 'SEER']); // a rival secretly holds Royal too, but says nothing
   setHand(room, 'Cara', ['THIEF', 'GUARD']);
 
   engine.makeClaim(room, 'p0', 'ROYAL', null);
   engine.pass(room, 'p1');
   engine.pass(room, 'p2');
 
-  assert.strictEqual(alice.tickets, 4, 'only +1 because a rival secretly holds a Royal too');
+  assert.strictEqual(alice.tickets, 5, 'full +2 — nobody spoke up, so nothing reduces it');
 });
 
-test('royal payout ignores an eliminated player who happened to hold a Royal', () => {
-  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+test('claimRoyalToo unchallenged: caps the original claimant at 1 ticket', () => {
+  // Seated so the counter-claimant (Bob) is NOT next in turn order after Alice — otherwise
+  // his own next-turn Stable Income would muddy the "no Royal bonus for countering" check.
+  const room = freshRoom(['Alice', 'Cara', 'Bob']);
   forceTurn(room, 0);
   const alice = byName(room, 'Alice');
   const bob = byName(room, 'Bob');
   alice.tickets = 3;
+  bob.tickets = 0; // freshRoom picks a random starting player, who gets Stable Income — reset regardless
   setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
-  setHand(room, 'Bob', []); // already eliminated, hand empty regardless of past cards
-  bob.alive = false;
-  bob.tickets = 0;
   setHand(room, 'Cara', ['THIEF', 'GUARD']);
+  setHand(room, 'Bob', ['ROYAL', 'SEER']);
 
   engine.makeClaim(room, 'p0', 'ROYAL', null);
-  engine.pass(room, 'p2'); // Bob is dead, only Cara can act
+  const res = engine.claimRoyalToo(room, 'p2'); // Bob: "I'm also a Royal!"
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(room.pendingClaim.claimantId, 'p2');
+  assert.strictEqual(room.pendingClaim.royalCounterFor, 'p0');
 
-  assert.strictEqual(alice.tickets, 5, 'full +2, the eliminated player does not count as a rival');
+  engine.pass(room, 'p0'); // Alice doesn't challenge Bob's counter-claim
+  engine.pass(room, 'p1'); // Cara doesn't either -> counter-claim stands unchallenged
+
+  assert.strictEqual(alice.tickets, 4, 'capped at +1, the counter-claim went unchallenged');
+  assert.strictEqual(bob.tickets, 0, 'the counter-claimant gets no Royal bonus of their own');
+});
+
+test('claimRoyalToo challenged and disproven: original claimant gets the full 2 after all', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  const bob = byName(room, 'Bob');
+  const cara = byName(room, 'Cara');
+  alice.tickets = 3;
+  cara.tickets = 0; // freshRoom picks a random starting player, who gets Stable Income — reset regardless
+  setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
+  setHand(room, 'Bob', ['THIEF', 'SEER']); // does NOT actually have Royal — bluffing the counter
+  setHand(room, 'Cara', ['GUARD', 'ASSASSIN']);
+
+  engine.makeClaim(room, 'p0', 'ROYAL', null);
+  engine.claimRoyalToo(room, 'p1');
+  const chRes = engine.challenge(room, 'p2'); // Cara calls Bob's bluff
+  assert.strictEqual(chRes.truthful, false);
+  assert.strictEqual(cara.tickets, 1, 'Cara gets the usual +1 for a correct challenge');
+  assert.strictEqual(room.phase, 'awaitingDiscard');
+  assert.strictEqual(room.pendingDiscard.playerId, 'p1', 'Bob discards for the failed counter-claim');
+
+  engine.resolveDiscard(room, 'p1', 0);
+  assert.strictEqual(bob.hand.length, 1);
+  assert.strictEqual(alice.tickets, 5, 'the disproven counter-claim means Alice\'s Royal pays out in full');
+});
+
+test('claimRoyalToo challenged and proven true: original claimant still only gets 1', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  const alice = byName(room, 'Alice');
+  const bob = byName(room, 'Bob');
+  const cara = byName(room, 'Cara');
+  alice.tickets = 3;
+  bob.tickets = 0; // freshRoom picks a random starting player, who gets Stable Income — reset regardless
+  setHand(room, 'Alice', ['ROYAL', 'TRICKSTER']);
+  setHand(room, 'Bob', ['ROYAL', 'SEER']); // really does have a Royal
+  setHand(room, 'Cara', ['GUARD', 'ASSASSIN']);
+
+  engine.makeClaim(room, 'p0', 'ROYAL', null);
+  engine.claimRoyalToo(room, 'p1');
+  const chRes = engine.challenge(room, 'p2'); // Cara wrongly doubts Bob
+  assert.strictEqual(chRes.truthful, true);
+  assert.strictEqual(bob.tickets, 1, 'Bob still gets the usual +1 for winning the challenge');
+  assert.strictEqual(room.pendingDiscard.playerId, 'p2', 'Cara discards for the wrong challenge');
+
+  engine.resolveDiscard(room, 'p2', 0);
+  assert.strictEqual(cara.hand.length, 1);
+  assert.strictEqual(bob.hand.length, 2, 'Bob\'s revealed Royal cycled back and he drew a replacement');
+  assert.strictEqual(alice.tickets, 4, 'capped at +1 — the counter-claim held up');
+});
+
+test('claimRoyalToo validation: only on a fresh Royal claim, never your own, never chained', () => {
+  const room = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room, 0);
+  setHand(room, 'Alice', ['THIEF', 'TRICKSTER']);
+  engine.makeClaim(room, 'p0', 'THIEF', 'p1');
+  assert.strictEqual(engine.claimRoyalToo(room, 'p2').ok, false, 'not a Royal claim');
+
+  const room2 = freshRoom(['Alice', 'Bob', 'Cara']);
+  forceTurn(room2, 0);
+  setHand(room2, 'Alice', ['ROYAL', 'TRICKSTER']);
+  engine.makeClaim(room2, 'p0', 'ROYAL', null);
+  assert.strictEqual(engine.claimRoyalToo(room2, 'p0').ok, false, 'cannot counter your own claim');
+  assert.strictEqual(engine.claimRoyalToo(room2, 'p1').ok, true);
+  assert.strictEqual(engine.claimRoyalToo(room2, 'p2').ok, false, 'no chaining a second counter-claim');
 });
 
 test('a 2-player game plays end to end: claim, correct challenge, discard, and elimination win', () => {

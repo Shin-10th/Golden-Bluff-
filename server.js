@@ -141,6 +141,8 @@ io.on('connection', (socket) => {
 
   socket.on('challenge', withRoom(socket, (room, playerId) => engine.challenge(room, playerId)));
 
+  socket.on('claimRoyalToo', withRoom(socket, (room, playerId) => engine.claimRoyalToo(room, playerId)));
+
   socket.on('resolveDiscard', withRoom(socket, (room, playerId, data) => engine.resolveDiscard(room, playerId, data.cardIndex)));
 
   socket.on('resolveTrickster', withRoom(socket, (room, playerId, data) => engine.resolveTrickster(room, playerId, data.cardIndex)));

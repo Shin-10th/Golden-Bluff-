@@ -43,6 +43,7 @@ const S = {
   seerToast: null,
   confettiSpawned: false,
   lastFlashSig: null,
+  lastOutcomeSig: null,
   lastScreen: null,
 };
 
@@ -66,7 +67,6 @@ function buildCharCard(key, opts = {}) {
 
   card.innerHTML = `
     <div class="cc-header">
-      <span class="cc-count">×3</span>
       <span class="cc-icon-badge">${charIconHTML(key)}</span>
     </div>
     <div class="cc-art"><div class="cc-art-icon">${charIconHTML(key)}</div></div>
@@ -88,13 +88,35 @@ function showError(msg) {
 socket.on('connect', () => { S.myId = socket.id; });
 
 socket.on('state', (pub) => {
-  maybeFlashChallenge(S.pub, pub);
-  reactToNewLogEntries(S.pub, pub);
-  reactToTicketDeltas(S.pub, pub);
-  S.prevPub = S.pub;
-  S.pub = pub;
-  if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
-  if (pub.phase !== 'gameover') S.confettiSpawned = false;
+  const prevPub = S.pub;
+  const outcome = detectChallengeOutcome(prevPub, pub);
+  const applyBookkeeping = () => {
+    S.prevPub = prevPub;
+    S.pub = pub;
+    if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
+    if (pub.phase !== 'gameover') S.confettiSpawned = false;
+  };
+
+  if (outcome) {
+    // The claim's fate (truthful/lie) is already decided server-side and folded into this
+    // one broadcast — so instead of letting everything land at once, spend a moment on it:
+    // CHALLENGE flash now, then (after a beat) a card-reveal flip, then a win/lose banner,
+    // and only THEN the ticket-fly/sound/log effects that used to fire instantly.
+    S.lastOutcomeSig = outcome.sig;
+    S.lastFlashSig = outcome.sig; // keep maybeFlashChallenge's own dedup in sync
+    spawnChallengeFlash(pub, outcome.c);
+    AudioFX.sfx('challenge');
+    applyBookkeeping();
+    render();
+    sequenceChallengeOutcome(prevPub, pub, outcome);
+    return;
+  }
+
+  maybeFlashChallenge(prevPub, pub);
+  reactToNewLogEntries(prevPub, pub);
+  reactToTicketDeltas(prevPub, pub);
+  reactToAbilitySpotlights(prevPub, pub);
+  applyBookkeeping();
   render();
 });
 
@@ -169,6 +191,89 @@ function maybeFlashChallenge(prevPub, pub) {
   spawnChallengeFlash(pub, c);
 }
 
+// Detects the single broadcast where a challenge's fate (truthful claim vs. caught bluff) has
+// just been decided server-side — the engine resolves this synchronously, so the log already
+// carries the outcome line by the time we see it. Returns null on any other broadcast (no new
+// challenge, or the outcome came through in a broadcast we've already handled).
+function detectChallengeOutcome(prevPub, pub) {
+  const c = pub && pub.pendingClaim;
+  if (!c || c.status !== 'challenged') return null;
+  const sig = JSON.stringify({ a: c.claimantId, b: c.character, t: c.targetId, ch: c.challengerId });
+  if (sig === S.lastOutcomeSig) return null;
+  const prevLast = prevPub && prevPub.log && prevPub.log.length ? prevPub.log[prevPub.log.length - 1].ts : 0;
+  const newEntries = (pub.log || []).filter((e) => e.ts > prevLast);
+  const lied = newEntries.some((e) => /was bluffing/.test(e.text));
+  const truthful = newEntries.some((e) => /— the claim was true!/.test(e.text));
+  if (!lied && !truthful) return null; // outcome not in this broadcast yet
+  return { sig, c, newEntries, truthful };
+}
+
+// Stages the dramatic beats for a just-resolved challenge: the CHALLENGE flash has already
+// fired by the time this is called, so this picks up from there — reveal flip, then a
+// win/lose banner, then (finally) the sound/card-fly/ticket-fly effects the outcome triggers,
+// timed so they land with the banner instead of all at once with the initial flash.
+function sequenceChallengeOutcome(prevPub, pub, outcome) {
+  const deferredEntries = outcome.newEntries.filter((e) => !/shouts CHALLENGE/.test(e.text));
+  const applyDeferredEffects = () => {
+    reactToNewLogEntries(prevPub, pub, deferredEntries);
+    reactToTicketDeltas(prevPub, pub);
+  };
+
+  if (PREFERS_REDUCED_MOTION) {
+    applyDeferredEffects();
+    return;
+  }
+
+  const FLASH_MS = 1500;
+  const FLIP_MS = 1000;
+  setTimeout(() => {
+    showRevealFlip(outcome.c, outcome.truthful);
+    setTimeout(() => {
+      showOutcomeBanner(pub, outcome);
+      applyDeferredEffects();
+    }, FLIP_MS);
+  }, FLASH_MS);
+}
+
+// The big centered card-flip: flips from a face-down back to either the real claimed
+// character (truthful claim survives) or a symbolic "BLUFF" face (lie caught) — the
+// bluffer's actual hand is NEVER shown, even here.
+function showRevealFlip(c, truthful) {
+  const meta = CHARACTERS[c.character];
+  const wrap = document.createElement('div');
+  wrap.className = 'reveal-flip-wrap';
+  const frontCls = truthful ? `reveal-face reveal-face-front ${charClass(c.character)}` : 'reveal-face reveal-face-front reveal-bluff';
+  const frontHtml = truthful
+    ? `<span class="rf-icon">${charIconHTML(c.character)}</span><span class="rf-name">${meta.name}</span>`
+    : `<span class="rf-icon">✕</span><span class="rf-name">BLUFF</span>`;
+  wrap.innerHTML = `
+    <div class="reveal-flip-inner">
+      <div class="reveal-face reveal-face-back"><span class="fc-back">🎴</span></div>
+      <div class="${frontCls}">${frontHtml}</div>
+    </div>
+  `;
+  fxLayer().appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add('flipped'));
+  setTimeout(() => wrap.remove(), 1500);
+}
+
+// The win/lose beat right after the flip settles: names the winner (tickets) and the loser
+// (a character) of this specific challenge, colored green/red so the outcome reads instantly.
+function showOutcomeBanner(pub, outcome) {
+  const claimant = pub.players.find((p) => p.id === outcome.c.claimantId);
+  const challenger = pub.players.find((p) => p.id === outcome.c.challengerId);
+  const winner = outcome.truthful ? claimant : challenger;
+  const loser = outcome.truthful ? challenger : claimant;
+  const div = document.createElement('div');
+  div.className = `outcome-banner ${outcome.truthful ? 'outcome-win' : 'outcome-loss'}`;
+  div.innerHTML = `
+    <div class="ob-title">${outcome.truthful ? '🏆 CLAIM HOLDS!' : '💥 CAUGHT BLUFFING!'}</div>
+    <div class="ob-sub">${winner ? winner.name : 'Someone'} wins the challenge · ${loser ? loser.name : 'Someone'} loses a character</div>
+  `;
+  fxLayer().appendChild(div);
+  setTimeout(() => div.remove(), 1600);
+}
+
 function spawnChallengeFlash(pub, c) {
   const claimant = pub.players.find((p) => p.id === c.claimantId);
   const challenger = pub.players.find((p) => p.id === c.challengerId);
@@ -186,10 +291,13 @@ function spawnChallengeFlash(pub, c) {
 // Generic hook: skim newly-added activity-log lines for keywords and play the
 // matching sound (and, for a Guard block, a visual flash) — works for every
 // player's client without any extra server events, since pub.log is already broadcast.
-function reactToNewLogEntries(prevPub, pub) {
+function reactToNewLogEntries(prevPub, pub, explicitEntries) {
   if (!pub || !pub.log) return;
-  const prevLast = prevPub && prevPub.log && prevPub.log.length ? prevPub.log[prevPub.log.length - 1].ts : 0;
-  const newEntries = pub.log.filter((e) => e.ts > prevLast);
+  let newEntries = explicitEntries;
+  if (!newEntries) {
+    const prevLast = prevPub && prevPub.log && prevPub.log.length ? prevPub.log[prevPub.log.length - 1].ts : 0;
+    newEntries = pub.log.filter((e) => e.ts > prevLast);
+  }
   const deck = el('pile-deck');
   newEntries.forEach((e) => {
     const t = e.text;
@@ -199,7 +307,7 @@ function reactToNewLogEntries(prevPub, pub) {
     else if (/wins with/.test(t)) AudioFX.sfx('win');
     else if (/is eliminated/.test(t)) AudioFX.sfx('defeat');
     else if (/claims/.test(t)) AudioFX.sfx('claim');
-    else if (/steals|from Royal|for the correct challenge|for winning the challenge|Stable Income/.test(t)) AudioFX.sfx('coin');
+    else if (/steals|from Royal|Royal pays out|for the correct challenge|for winning the challenge|Stable Income/.test(t)) AudioFX.sfx('coin');
     else if (/discards|pays 2 🎟️/.test(t)) AudioFX.sfx('loss');
 
     // --- Card-pile animations: only for events the rules already make public. ---
@@ -230,6 +338,57 @@ function reactToNewLogEntries(prevPub, pub) {
       if (id) flyCard(deck, playerAnchor(id), null);
     }
   });
+}
+
+// Center-stage flavor pop-up for the moment an ability actually resolves — a themed
+// callout (icon + flourish + flavor text) rather than just a log line. Triggered off the
+// specific outcome log lines each ability writes, plus (for Trickster, whose resolution
+// reuses a generic "shuffled back" line shared with Guard/reveal redraws) the
+// pendingTrickster state transition instead.
+const SPOTLIGHT_FLAVOR = {
+  ROYAL:     { title: '👑 ROYAL DECREE' },
+  THIEF:     { title: '🦹 THE THIEF STRIKES' },
+  SEER:      { title: '🔮 THE SEER PEEKS' },
+  TRICKSTER: { title: '🎭 THE SWITCH' },
+  ASSASSIN:  { title: '☠️ THE ASSASSIN STRIKES' },
+};
+
+function reactToAbilitySpotlights(prevPub, pub, explicitEntries) {
+  if (!pub) return;
+  let newEntries = explicitEntries;
+  if (!newEntries) {
+    const prevLast = prevPub && prevPub.log && prevPub.log.length ? prevPub.log[prevPub.log.length - 1].ts : 0;
+    newEntries = (pub.log || []).filter((e) => e.ts > prevLast);
+  }
+  newEntries.forEach((e) => {
+    const t = e.text;
+    let m;
+    if ((m = t.match(/^(.+?) gains 2 🎟️ from Royal\.$/))) spawnAbilitySpotlight('ROYAL', m[1], 'Gains 2 🎟️!');
+    else if ((m = t.match(/^(.+?)'s Royal pays out the full 2/))) spawnAbilitySpotlight('ROYAL', m[1], 'Gains the full 2 🎟️!');
+    else if ((m = t.match(/^(.+?)'s Royal only pays out 1/))) spawnAbilitySpotlight('ROYAL', m[1], 'Capped at 1 🎟️.');
+    else if ((m = t.match(/^(.+?) steals (\d+) 🎟️ from (.+?)\.$/))) spawnAbilitySpotlight('THIEF', m[1], `Steals ${m[2]} 🎟️ from ${m[3]}!`);
+    else if ((m = t.match(/^(.+?) pays 2 🎟️ for the Assassin\.$/))) spawnAbilitySpotlight('ASSASSIN', m[1], 'Strikes!');
+    else if ((m = t.match(/^(.+?) shows one of their cards to (.+?)\.$/))) spawnAbilitySpotlight('SEER', m[2], `Peeks at ${m[1]}'s hand!`);
+    else if ((m = t.match(/^(.+?) has only one card left and shows it to (.+?)\.$/))) spawnAbilitySpotlight('SEER', m[2], `Peeks at ${m[1]}'s hand!`);
+  });
+  if (prevPub && prevPub.pendingTrickster && (!pub.pendingTrickster)) {
+    const p = pub.players.find((pl) => pl.id === prevPub.pendingTrickster.claimantId);
+    spawnAbilitySpotlight('TRICKSTER', p ? p.name : 'Someone', 'Swaps a card!');
+  }
+}
+
+function spawnAbilitySpotlight(key, playerName, flavorText) {
+  const meta = SPOTLIGHT_FLAVOR[key];
+  if (!meta) return;
+  const div = document.createElement('div');
+  div.className = `ability-spotlight ${charClass(key)}`;
+  div.innerHTML = `
+    <div class="asl-icon">${charIconHTML(key)}</div>
+    <div class="asl-title">${meta.title}</div>
+    <div class="asl-sub">${playerName} — ${flavorText}</div>
+  `;
+  fxLayer().appendChild(div);
+  setTimeout(() => div.remove(), 2000);
 }
 
 function idByName(pub, name) {
@@ -537,7 +696,8 @@ function renderTableCenter(pub) {
     const c = pub.pendingClaim;
     const meta = CHARACTERS[c.character];
     const targetTxt = c.targetId ? ` → ${nameOf(pub, c.targetId)}` : '';
-    status(`<b>${nameOf(pub, c.claimantId)}</b> claims<br><span class="c-icon-inline">${charIconHTML(c.character)}</span><b style="color:var(--char-a)">${meta.name}</b>${targetTxt}`, charClass(c.character));
+    const counterTxt = c.royalCounterFor ? `<br><span class="tc-counter-note">countering ${nameOf(pub, c.royalCounterFor)}'s claim</span>` : '';
+    status(`<b>${nameOf(pub, c.claimantId)}</b> claims<br><span class="c-icon-inline">${charIconHTML(c.character)}</span><b style="color:var(--char-a)">${meta.name}</b>${targetTxt}${counterTxt}`, charClass(c.character));
 
     if (c.claimantId === S.myId) {
       status('Waiting to see if anyone challenges...');
@@ -552,11 +712,20 @@ function renderTableCenter(pub) {
       challengeBtn.className = 'danger';
       challengeBtn.textContent = 'CHALLENGE!';
       challengeBtn.onclick = () => { AudioFX.sfx('click'); socket.emit('challenge', {}, (res) => { if (!res.ok) alert(res.error); }); };
+      row.appendChild(challengeBtn);
+      // Only on a fresh Royal claim (never on someone else's counter-claim) can a rival
+      // speak up with their own "I'm also a Royal" instead of just passing or challenging.
+      if (c.character === 'ROYAL' && !c.royalCounterFor) {
+        const royalTooBtn = document.createElement('button');
+        royalTooBtn.className = 'secondary';
+        royalTooBtn.textContent = '👑 I\'m also a Royal';
+        royalTooBtn.onclick = () => { AudioFX.sfx('click'); socket.emit('claimRoyalToo', {}, (res) => { if (!res.ok) alert(res.error); }); };
+        row.appendChild(royalTooBtn);
+      }
       const passBtn = document.createElement('button');
       passBtn.className = 'secondary';
       passBtn.textContent = 'Pass';
       passBtn.onclick = () => { AudioFX.sfx('click'); socket.emit('pass', {}, (res) => { if (!res.ok) alert(res.error); }); };
-      row.appendChild(challengeBtn);
       row.appendChild(passBtn);
       center.appendChild(row);
     }
