@@ -70,13 +70,31 @@ function alivePlayers(room) {
   return room.players.filter((p) => p.alive);
 }
 
-function addPlayer(room, id, name) {
+// Defends against a malformed/malicious client rather than trusting whatever shape shows
+// up on the wire -- values only ever flow into THREE.Color()/canvas drawing (never HTML),
+// but a fixed allow-list keeps a bad client from wedging a giant string into every
+// broadcast (serializePublicState sends this to every player on every state update).
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const VALID_HATS = new Set(['none', 'cap', 'cone', 'crown', 'band']);
+const VALID_FACES = new Set(['happy', 'smirk', 'surprised', 'glasses', 'mask']);
+function sanitizeAvatar(avatar) {
+  const a = avatar && typeof avatar === 'object' ? avatar : {};
+  return {
+    bodyColor: HEX_COLOR_RE.test(a.bodyColor) ? a.bodyColor : '#e8b04a',
+    hatColor: HEX_COLOR_RE.test(a.hatColor) ? a.hatColor : '#5c4a32',
+    hat: VALID_HATS.has(a.hat) ? a.hat : 'none',
+    face: VALID_FACES.has(a.face) ? a.face : 'happy',
+    tagColor: HEX_COLOR_RE.test(a.tagColor) ? a.tagColor : '#c9a227',
+  };
+}
+
+function addPlayer(room, id, name, avatar) {
   if (room.phase !== 'lobby') return { ok: false, error: 'Game already started.' };
   if (room.players.length >= MAX_PLAYERS) return { ok: false, error: 'Room is full (max 6).' };
   if (room.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
     return { ok: false, error: 'That name is taken in this room.' };
   }
-  const player = { id, name, hand: [], tickets: 0, alive: true, connected: true };
+  const player = { id, name, hand: [], tickets: 0, alive: true, connected: true, avatar: sanitizeAvatar(avatar) };
   room.players.push(player);
   if (!room.hostId) room.hostId = id;
   log(room, `${name} joined the room.`);
@@ -533,7 +551,7 @@ function serializePublicState(room) {
     deckCount: room.deck.length,
     players: room.players.map((p) => ({
       id: p.id, name: p.name, tickets: p.tickets, cardCount: p.hand.length,
-      alive: p.alive, connected: p.connected,
+      alive: p.alive, connected: p.connected, avatar: p.avatar || sanitizeAvatar(null),
     })),
     pendingClaim: room.pendingClaim ? {
       claimantId: room.pendingClaim.claimantId,

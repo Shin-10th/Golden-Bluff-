@@ -101,12 +101,12 @@ function withRoom(socket, fn) {
 }
 
 io.on('connection', (socket) => {
-  socket.on('createRoom', ({ name }, cb) => {
+  socket.on('createRoom', ({ name, avatar }, cb) => {
     const trimmed = (name || '').trim().slice(0, 20);
     if (!trimmed) return cb && cb({ ok: false, error: 'Enter a name.' });
     const code = makeRoomCode();
     const room = engine.createRoom(code);
-    engine.addPlayer(room, socket.id, trimmed);
+    engine.addPlayer(room, socket.id, trimmed, avatar);
     rooms.set(code, room);
     socketInfo.set(socket.id, { roomCode: code });
     socket.join(code);
@@ -114,13 +114,13 @@ io.on('connection', (socket) => {
     broadcastRoom(room);
   });
 
-  socket.on('joinRoom', ({ code, name }, cb) => {
+  socket.on('joinRoom', ({ code, name, avatar }, cb) => {
     const trimmed = (name || '').trim().slice(0, 20);
     const roomCode = (code || '').trim().toUpperCase();
     if (!trimmed) return cb && cb({ ok: false, error: 'Enter a name.' });
     const room = rooms.get(roomCode);
     if (!room) return cb && cb({ ok: false, error: 'Room not found.' });
-    const res = engine.addPlayer(room, socket.id, trimmed);
+    const res = engine.addPlayer(room, socket.id, trimmed, avatar);
     if (!res.ok) return cb && cb(res);
     socketInfo.set(socket.id, { roomCode });
     socket.join(roomCode);

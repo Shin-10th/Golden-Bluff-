@@ -28,8 +28,17 @@ const el = (id) => document.getElementById(id);
 const charClass = (key) => `char-${key}`;
 const initials = (name) => (name || '?').trim().charAt(0).toUpperCase();
 
+const DEFAULT_AVATAR = { bodyColor: '#e8b04a', hat: 'none', face: 'happy', tagColor: '#c9a227' };
+function loadSavedAvatar() {
+  try {
+    const raw = localStorage.getItem('goldenbluff_avatar');
+    if (!raw) return { ...DEFAULT_AVATAR };
+    return { ...DEFAULT_AVATAR, ...JSON.parse(raw) };
+  } catch (e) { return { ...DEFAULT_AVATAR }; }
+}
+
 const S = {
-  screen: 'auth',       // auth | lobby | game
+  screen: 'auth',       // auth | avatar | lobby | game
   myId: null,
   myName: '',
   code: null,
@@ -45,6 +54,9 @@ const S = {
   lastFlashSig: null,
   lastOutcomeSig: null,
   lastScreen: null,
+  avatar: loadSavedAvatar(),   // my own 3D avatar customization
+  pendingAuth: null,           // { mode: 'create'|'join', name, code } -- staged while on the avatar screen
+  avatarPreview: null,         // the live rotating preview renderer (built lazily)
 };
 
 // Builds one trading-card-style Character card: art + name + full description.
@@ -69,7 +81,7 @@ function buildCharCard(key, opts = {}) {
     <div class="cc-header">
       <span class="cc-icon-badge">${charIconHTML(key)}</span>
     </div>
-    <div class="cc-art"><div class="cc-art-icon">${charIconHTML(key)}</div></div>
+    <div class="cc-art">${buildCardArtHTML(key, opts)}</div>
     <div class="c-name">${meta.name}</div>
     ${bodyHtml}
   `;
@@ -77,6 +89,16 @@ function buildCharCard(key, opts = {}) {
     card.onclick = () => { AudioFX.sfx('click'); opts.onClick(); };
   }
   return card;
+}
+
+// A card's art is your own 3D avatar wearing that character's look, when we have an
+// avatar config to render it with (your own hand cards); otherwise the plain flat icon.
+function buildCardArtHTML(key, opts) {
+  if (opts.avatarConfig) {
+    const snapshot = getAvatarSnapshot(opts.avatarConfig, key);
+    if (snapshot) return `<img class="avatar-snapshot" src="${snapshot}" alt="">`;
+  }
+  return `<div class="cc-art-icon">${charIconHTML(key)}</div>`;
 }
 
 function showError(msg) {
@@ -134,16 +156,15 @@ socket.on('chatMessage', (msg) => {
 });
 
 // ---------- Auth screen ----------
+// Both forms stage their intent and hand off to the avatar creator screen first --
+// the actual createRoom/joinRoom call happens once the player confirms their look.
 el('create-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const name = el('create-name').value.trim();
   if (!name) return showError('Enter your name.');
-  socket.emit('createRoom', { name }, (res) => {
-    if (!res.ok) return showError(res.error);
-    S.myName = name; S.code = res.code; S.myId = res.playerId;
-    S.screen = 'lobby';
-    render();
-  });
+  S.pendingAuth = { mode: 'create', name };
+  S.screen = 'avatar';
+  render();
 });
 
 el('join-form').addEventListener('submit', (e) => {
@@ -151,18 +172,129 @@ el('join-form').addEventListener('submit', (e) => {
   const name = el('join-name').value.trim();
   const code = el('join-code').value.trim();
   if (!name || !code) return showError('Enter your name and the room code.');
-  socket.emit('joinRoom', { name, code }, (res) => {
-    if (!res.ok) return showError(res.error);
-    S.myName = name; S.code = res.code; S.myId = res.playerId;
+  S.pendingAuth = { mode: 'join', name, code };
+  S.screen = 'avatar';
+  render();
+});
+
+el('avatar-back-btn').addEventListener('click', () => {
+  S.pendingAuth = null;
+  S.screen = 'auth';
+  render();
+});
+
+el('avatar-confirm-btn').addEventListener('click', () => {
+  const pending = S.pendingAuth;
+  if (!pending) return;
+  try { localStorage.setItem('goldenbluff_avatar', JSON.stringify(S.avatar)); } catch (e) { /* best-effort */ }
+  const done = (res) => {
+    if (!res.ok) { S.screen = 'auth'; render(); return showError(res.error); }
+    S.myName = pending.name; S.code = res.code; S.myId = res.playerId;
+    S.pendingAuth = null;
     S.screen = 'lobby';
     render();
-  });
+  };
+  if (pending.mode === 'create') {
+    socket.emit('createRoom', { name: pending.name, avatar: S.avatar }, done);
+  } else {
+    socket.emit('joinRoom', { name: pending.name, code: pending.code, avatar: S.avatar }, done);
+  }
 });
 
 el('start-game-btn').addEventListener('click', () => {
   AudioFX.sfx('click');
   socket.emit('startGame', {}, (res) => { if (!res.ok) alert(res.error); });
 });
+
+// ---------- Avatar creator screen ----------
+const HAT_LABELS = { none: 'None', cap: 'Cap', cone: 'Wizard', crown: 'Crown', band: 'Band' };
+const FACE_LABELS = { happy: 'Happy', smirk: 'Smirk', surprised: 'Surprised', glasses: 'Shades', mask: 'Masked' };
+let avatarUIBuilt = false;
+let avatarPreviewSig = null;
+
+function buildAvatarCreatorUI() {
+  if (avatarUIBuilt) return;
+  avatarUIBuilt = true;
+  const { AVATAR_OPTIONS } = window.Avatar3D;
+
+  AVATAR_OPTIONS.bodyColors.forEach((color) => {
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = color;
+    sw.dataset.color = color;
+    sw.title = color;
+    sw.onclick = () => { S.avatar.bodyColor = color; render(); };
+    el('avatar-body-swatches').appendChild(sw);
+
+    const tagSw = sw.cloneNode(true);
+    tagSw.onclick = () => { S.avatar.tagColor = color; render(); };
+    el('avatar-tag-swatches').appendChild(tagSw);
+  });
+
+  AVATAR_OPTIONS.hats.forEach((hat) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'option-btn';
+    btn.textContent = HAT_LABELS[hat] || hat;
+    btn.dataset.value = hat;
+    btn.onclick = () => { S.avatar.hat = hat; render(); };
+    el('avatar-hat-options').appendChild(btn);
+  });
+
+  AVATAR_OPTIONS.faces.forEach((face) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'option-btn';
+    btn.textContent = FACE_LABELS[face] || face;
+    btn.dataset.value = face;
+    btn.onclick = () => { S.avatar.face = face; render(); };
+    el('avatar-face-options').appendChild(btn);
+  });
+}
+
+function renderAvatarScreen() {
+  if (!window.Avatar3D) return; // module still loading -- render() will retry on the next tick
+  buildAvatarCreatorUI();
+
+  if (!S.avatarPreview) {
+    S.avatarPreview = window.Avatar3D.createPreviewRenderer(el('avatar-preview-canvas'));
+  }
+  const sig = JSON.stringify(S.avatar);
+  if (sig !== avatarPreviewSig) {
+    avatarPreviewSig = sig;
+    S.avatarPreview.update(S.avatar, null);
+  }
+
+  el('avatar-body-swatches').querySelectorAll('.swatch').forEach((sw) => {
+    sw.classList.toggle('selected', sw.dataset.color === S.avatar.bodyColor);
+  });
+  el('avatar-tag-swatches').querySelectorAll('.swatch').forEach((sw) => {
+    sw.classList.toggle('selected', sw.dataset.color === S.avatar.tagColor);
+  });
+  el('avatar-hat-options').querySelectorAll('.option-btn').forEach((btn) => {
+    btn.classList.toggle('selected', btn.dataset.value === S.avatar.hat);
+  });
+  el('avatar-face-options').querySelectorAll('.option-btn').forEach((btn) => {
+    btn.classList.toggle('selected', btn.dataset.value === S.avatar.face);
+  });
+}
+
+// A small cache of baked avatar images (data URLs), keyed by config + which character's
+// accessory look is applied -- rendered once each via a single shared off-screen WebGL
+// context (see avatar3d.js), then reused as plain <img> everywhere (seats, cards).
+const avatarSnapshotCache = new Map();
+function getAvatarSnapshot(avatarConfig, charKey) {
+  if (!window.Avatar3D || !avatarConfig) return null;
+  const key = JSON.stringify(avatarConfig) + '|' + (charKey || '');
+  let url = avatarSnapshotCache.get(key);
+  if (!url) {
+    const charOverride = charKey ? window.Avatar3D.CHARACTER_ACCESSORY[charKey] : null;
+    url = window.Avatar3D.renderSnapshot(avatarConfig, { charOverride, size: 160 });
+    avatarSnapshotCache.set(key, url);
+  }
+  return url;
+}
+window.addEventListener('avatar3d-ready', () => { if (S.screen === 'avatar') render(); });
 
 el('chat-form').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -540,6 +672,7 @@ function reactToTicketDeltas(prevPub, pub) {
 // ---------- Render ----------
 function render() {
   el('screen-auth').classList.toggle('hidden', S.screen !== 'auth');
+  el('screen-avatar').classList.toggle('hidden', S.screen !== 'avatar');
   el('screen-lobby').classList.toggle('hidden', S.screen !== 'lobby');
   el('screen-game').classList.toggle('hidden', S.screen !== 'game');
 
@@ -551,6 +684,7 @@ function render() {
     S.lastScreen = S.screen;
   }
 
+  if (S.screen === 'avatar') renderAvatarScreen();
   if (S.screen === 'lobby') renderLobby();
   if (S.screen === 'game') renderGame();
   renderSeerToast();
@@ -643,8 +777,10 @@ function renderSeats(pub) {
     if (justEliminated) seat.classList.add('just-eliminated');
     seat.style.left = leftPct + '%';
     seat.style.top = topPct + '%';
+    const snapshot = p.alive ? getAvatarSnapshot(p.avatar, null) : null;
+    const avatarInner = snapshot ? `<img class="avatar-snapshot" src="${snapshot}" alt="">` : (p.alive ? initials(p.name) : '💀');
     seat.innerHTML = `
-      <div class="seat-avatar">${p.alive ? initials(p.name) : '💀'}${isReacting ? '<span class="seat-shield">🛡️</span>' : ''}</div>
+      <div class="seat-avatar">${avatarInner}${isReacting ? '<span class="seat-shield">🛡️</span>' : ''}</div>
       <div class="seat-name">${p.name}${!p.connected ? ' 💤' : ''}</div>
       <div class="seat-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</div>
       <div class="seat-hearts">${p.alive ? '❤️'.repeat(p.cardCount) : ''}</div>
@@ -802,6 +938,7 @@ function buildHandCardPicker(eventName) {
   S.hand.forEach((c, idx) => {
     wrap.appendChild(buildCharCard(c, {
       onClick: () => socket.emit(eventName, { cardIndex: idx }, (res) => { if (!res.ok) alert(res.error); }),
+      avatarConfig: S.avatar,
     }));
   });
   return wrap;
@@ -815,6 +952,7 @@ function buildGuardReactionUI() {
   if (guardIndex !== -1) {
     wrap.appendChild(buildCharCard('GUARD', {
       descOverride: 'Reveal this to block it! It goes back into the deck and you draw a fresh secret card.',
+      avatarConfig: S.avatar,
       onClick: () => socket.emit('guardReact', { reveal: true, cardIndex: guardIndex }, (res) => { if (!res.ok) alert(res.error); }),
     }));
   }
@@ -835,6 +973,7 @@ function buildClaimChipUI(pub) {
     grid.appendChild(buildCharCard(key, {
       selected: S.selectedCharacter === key,
       onClick: () => { S.selectedCharacter = key; S.selectedTarget = null; render(); },
+      avatarConfig: S.avatar,
     }));
   });
   wrap.appendChild(grid);
@@ -891,7 +1030,7 @@ function renderMyHand() {
   const n = S.hand.length;
 
   S.hand.forEach((c, idx) => {
-    const card = buildCharCard(c, { hand: true });
+    const card = buildCharCard(c, { hand: true, avatarConfig: S.avatar });
 
     // Cards sit in normal flex flow (not absolutely positioned) so the row
     // centers reliably at any hand size; a small rotation from the bottom
