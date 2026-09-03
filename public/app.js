@@ -511,7 +511,7 @@ function reactToNewLogEntries(prevPub, pub, explicitEntries) {
   const deck = el('pile-deck');
   newEntries.forEach((e) => {
     const t = e.text;
-    if (/reveals GUARD and blocks/.test(t)) { AudioFX.sfx('shield'); spawnGuardFlash(t); }
+    if (/reveals GUARD and blocks/.test(t)) { AudioFX.sfx('shield'); }
     else if (/was bluffing/.test(t)) AudioFX.sfx('bust');
     else if (/shouts CHALLENGE/.test(t)) AudioFX.sfx('challenge');
     else if (/wins with/.test(t)) AudioFX.sfx('win');
@@ -558,6 +558,7 @@ function reactToNewLogEntries(prevPub, pub, explicitEntries) {
 const SPOTLIGHT_FLAVOR = {
   ROYAL:     { title: '👑 ROYAL DECREE' },
   THIEF:     { title: '🦹 THE THIEF STRIKES' },
+  GUARD:     { title: '🛡️ GUARD BLOCKS' },
   SEER:      { title: '🔮 THE SEER PEEKS' },
   TRICKSTER: { title: '🎭 THE SWITCH' },
   ASSASSIN:  { title: '☠️ THE ASSASSIN STRIKES' },
@@ -573,45 +574,87 @@ function reactToAbilitySpotlights(prevPub, pub, explicitEntries) {
   newEntries.forEach((e) => {
     const t = e.text;
     let m;
-    if ((m = t.match(/^(.+?) gains 2 🎟️ from Royal\.$/))) spawnAbilitySpotlight('ROYAL', m[1], 'Gains 2 🎟️!');
-    else if ((m = t.match(/^(.+?)'s Royal pays out the full 2/))) spawnAbilitySpotlight('ROYAL', m[1], 'Gains the full 2 🎟️!');
-    else if ((m = t.match(/^(.+?)'s Royal only pays out 1/))) spawnAbilitySpotlight('ROYAL', m[1], 'Capped at 1 🎟️.');
-    else if ((m = t.match(/^(.+?) steals (\d+) 🎟️ from (.+?)\.$/))) spawnAbilitySpotlight('THIEF', m[1], `Steals ${m[2]} 🎟️ from ${m[3]}!`);
-    else if ((m = t.match(/^(.+?) pays 2 🎟️ for the Assassin\.$/))) spawnAbilitySpotlight('ASSASSIN', m[1], 'Strikes!');
-    else if ((m = t.match(/^(.+?) shows one of their cards to (.+?)\.$/))) spawnAbilitySpotlight('SEER', m[2], `Peeks at ${m[1]}'s hand!`);
-    else if ((m = t.match(/^(.+?) has only one card left and shows it to (.+?)\.$/))) spawnAbilitySpotlight('SEER', m[2], `Peeks at ${m[1]}'s hand!`);
+    if ((m = t.match(/^(.+?) gains 2 🎟️ from Royal\.$/))) spawnAbilitySpotlight(pub, 'ROYAL', m[1], 'Gains 2 🎟️!');
+    else if ((m = t.match(/^(.+?)'s Royal pays out the full 2/))) spawnAbilitySpotlight(pub, 'ROYAL', m[1], 'Gains the full 2 🎟️!');
+    else if ((m = t.match(/^(.+?)'s Royal only pays out 1/))) spawnAbilitySpotlight(pub, 'ROYAL', m[1], 'Capped at 1 🎟️.');
+    else if ((m = t.match(/^(.+?) steals (\d+) 🎟️ from (.+?)\.$/))) spawnAbilitySpotlight(pub, 'THIEF', m[1], `Steals ${m[2]} 🎟️ from ${m[3]}!`);
+    else if ((m = t.match(/^(.+?) pays 2 🎟️ for the Assassin\.$/))) spawnAbilitySpotlight(pub, 'ASSASSIN', m[1], 'Strikes!');
+    else if ((m = t.match(/^🛡️ (.+?) reveals GUARD and blocks/))) spawnAbilitySpotlight(pub, 'GUARD', m[1], 'Blocks it!');
+    else if ((m = t.match(/^(.+?) shows one of their cards to (.+?)\.$/))) spawnAbilitySpotlight(pub, 'SEER', m[2], `Peeks at ${m[1]}'s hand!`);
+    else if ((m = t.match(/^(.+?) has only one card left and shows it to (.+?)\.$/))) spawnAbilitySpotlight(pub, 'SEER', m[2], `Peeks at ${m[1]}'s hand!`);
   });
   if (prevPub && prevPub.pendingTrickster && (!pub.pendingTrickster)) {
     const p = pub.players.find((pl) => pl.id === prevPub.pendingTrickster.claimantId);
-    spawnAbilitySpotlight('TRICKSTER', p ? p.name : 'Someone', 'Swaps a card!');
+    spawnAbilitySpotlight(pub, 'TRICKSTER', p ? p.name : 'Someone', 'Swaps a card!');
   }
 }
 
-function spawnAbilitySpotlight(key, playerName, flavorText) {
+// Builds a handful of themed particle elements inside the spotlight's art box, positioned
+// with CSS custom properties (--dx/--dy/--rot) so the actual motion lives in styles.css --
+// this just decides how many and roughly where they start from, per Character.
+function spawnSpotlightParticles(key, container) {
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const spawn = (cls, count, setup) => {
+    for (let i = 0; i < count; i++) {
+      const p = document.createElement('span');
+      p.className = cls;
+      if (setup) setup(p, i);
+      container.appendChild(p);
+    }
+  };
+  if (key === 'ROYAL') {
+    spawn('spotlight-coin', 9, (p, i) => {
+      const angle = rand(0, Math.PI * 2);
+      const dist = rand(36, 72);
+      p.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+      p.style.setProperty('--dy', `${Math.sin(angle) * dist - 24}px`);
+      p.style.setProperty('--rot', `${rand(-180, 180)}deg`);
+      p.style.animationDelay = `${i * 0.025}s`;
+    });
+  } else if (key === 'THIEF') {
+    spawn('spotlight-dash', 3, (p, i) => {
+      p.style.top = `${38 + i * 12}%`;
+      p.style.animationDelay = `${i * 0.06}s`;
+    });
+  } else if (key === 'GUARD') {
+    spawn('spotlight-ring', 1);
+  } else if (key === 'SEER') {
+    spawn('spotlight-glow', 1);
+  } else if (key === 'TRICKSTER') {
+    spawn('spotlight-swirl', 1);
+  } else if (key === 'ASSASSIN') {
+    spawn('spotlight-slash', 1);
+    spawn('spotlight-flash', 1);
+  }
+}
+
+// Center-stage flavor pop-up for the moment an ability actually resolves -- now starring
+// the acting player's own avatar (with that Character's themed accessory, same art used on
+// their cards) instead of a generic icon, plus a per-Character CSS flourish + particle burst.
+function spawnAbilitySpotlight(pub, key, playerName, flavorText) {
   const meta = SPOTLIGHT_FLAVOR[key];
   if (!meta) return;
+  const player = pub.players.find((pl) => pl.name === playerName);
+  let artHTML = `<div class="asl-icon">${charIconHTML(key)}</div>`;
+  if (player && player.avatar) {
+    const snap = getAvatarSnapshot(player.avatar, key);
+    if (snap) artHTML = `<img class="asl-avatar" src="${snap}" alt="">`;
+  }
   const div = document.createElement('div');
   div.className = `ability-spotlight ${charClass(key)}`;
   div.innerHTML = `
-    <div class="asl-icon">${charIconHTML(key)}</div>
+    <div class="asl-art">${artHTML}</div>
     <div class="asl-title">${meta.title}</div>
     <div class="asl-sub">${playerName} — ${flavorText}</div>
   `;
   fxLayer().appendChild(div);
+  spawnSpotlightParticles(key, div.querySelector('.asl-art'));
   setTimeout(() => div.remove(), 2000);
 }
 
 function idByName(pub, name) {
   const p = pub.players.find((pl) => pl.name === name);
   return p ? p.id : null;
-}
-
-function spawnGuardFlash(logText) {
-  const div = document.createElement('div');
-  div.className = 'guard-flash char-GUARD';
-  div.innerHTML = `<div class="gf-title">🛡️ BLOCKED!</div><div class="gf-sub">${logText}</div>`;
-  fxLayer().appendChild(div);
-  setTimeout(() => div.remove(), 1500);
 }
 
 // A slow, continuous drift of embers rising from the bottom of the screen —
