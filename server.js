@@ -133,6 +133,8 @@ io.on('connection', (socket) => {
     return engine.startGame(room);
   }));
 
+  socket.on('updateAvatar', withRoom(socket, (room, playerId, data) => engine.updatePlayerAvatar(room, playerId, data.avatar)));
+
   socket.on('makeClaim', withRoom(socket, (room, playerId, data) => {
     return engine.makeClaim(room, playerId, data.character, data.targetId || null);
   }));

@@ -97,6 +97,23 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .or-divider { color: var(--muted); margin: 1rem 0; font-size: 0.85rem; }
 .error-msg { color: var(--danger); font-size: 0.9rem; min-height: 1.2em; }
 
+/* ================= Title screen ================= */
+.title-menu { display: flex; flex-direction: column; align-items: center; gap: 1.1rem; }
+.title-play-btn { width: 100%; font-size: 1.15rem; padding: 0.8rem 1rem; }
+.title-icon-row { display: flex; gap: 0.9rem; }
+
+/* ================= How to Play screen ================= */
+.howtoplay-box {
+  max-width: 640px; text-align: left; max-height: 78vh; overflow-y: auto;
+}
+.howtoplay-box h3 { margin-bottom: 0.35rem; margin-top: 1.1rem; }
+.howtoplay-box h3:first-of-type { margin-top: 0.6rem; }
+.howtoplay-box p { margin: 0.35rem 0; line-height: 1.45; font-size: 0.92rem; }
+.core-loop {
+  text-align: center; font-style: italic; color: var(--gold-bright);
+  border: 1px dashed var(--gold); border-radius: 10px; padding: 0.6rem 0.8rem; margin-bottom: 0.3rem !important;
+}
+
 /* ================= Avatar creator screen ================= */
 .avatar-creator { max-width: 460px; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
 .avatar-preview-canvas {
@@ -675,6 +692,14 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 
 .fan-card.deal-in { animation: dealIn 0.5s ease both; }
 .fan-card.flip-swap { animation: flipCard 0.6s ease; }
+
+.cheat-sheet-panel summary {
+  cursor: pointer; font-family: 'Cinzel', serif; color: var(--gold-bright); font-weight: bold;
+  letter-spacing: 0.02em; margin: -0.15rem 0 0.5rem;
+}
+.cheat-sheet-panel .char-grid { grid-template-columns: 1fr; margin: 0; }
+.cheat-sheet-panel .char-btn { padding: 0.5rem 0.6rem; }
+.cheat-sheet-panel .c-desc { font-size: 0.74rem; }
 
 .log-drawer {
   position: fixed; top: 0; right: 0; height: 100vh; width: min(360px, 90vw); z-index: 100;

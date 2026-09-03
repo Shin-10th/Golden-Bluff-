@@ -114,6 +114,17 @@ function removePlayer(room, id) {
   }
 }
 
+// Lets a player restyle their avatar between games (e.g. mid-lobby), reusing the same
+// sanitization as the initial join -- restricted to the lobby so a stray/late client
+// message can't rewrite someone's look mid-round.
+function updatePlayerAvatar(room, playerId, avatar) {
+  if (room.phase !== 'lobby') return { ok: false, error: 'Cannot change your avatar once the game has started.' };
+  const player = getPlayer(room, playerId);
+  if (!player) return { ok: false, error: 'You are not in this room.' };
+  player.avatar = sanitizeAvatar(avatar);
+  return { ok: true };
+}
+
 function canStart(room) {
   return room.phase === 'lobby' && room.players.length >= MIN_PLAYERS && room.players.length <= MAX_PLAYERS;
 }
@@ -584,7 +595,7 @@ function serializePrivateHand(room, playerId) {
 
 module.exports = {
   CHARACTERS, CHARACTER_KEYS, CLAIMABLE_CHARACTER_KEYS, MIN_PLAYERS, MAX_PLAYERS, WINNING_TICKETS,
-  createRoom, addPlayer, removePlayer, canStart, startGame,
+  createRoom, addPlayer, removePlayer, updatePlayerAvatar, canStart, startGame,
   makeClaim, pass, challenge, claimRoyalToo, resolveUnchallenged,
   resolveGuardReaction, resolveSeerChoice, resolveDiscard, resolveTrickster,
   serializePublicState, serializePrivateHand, getPlayer, alivePlayers,

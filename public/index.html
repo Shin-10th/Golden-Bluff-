@@ -12,8 +12,21 @@
 <body>
 <div id="app">
 
+  <!-- TITLE SCREEN -->
+  <div id="screen-title" class="center-screen">
+    <div class="title">🎟️ Golden Bluff</div>
+    <div class="subtitle">Claim it. Bluff it. Get away with it — or don't.</div>
+    <div class="card-box title-menu">
+      <button id="title-play-btn" class="primary title-play-btn">Play</button>
+      <div class="title-icon-row">
+        <button id="title-avatar-btn" class="icon-btn" type="button" title="Edit Avatar">🎭</button>
+        <button id="title-howtoplay-btn" class="icon-btn" type="button" title="How to Play">📖</button>
+      </div>
+    </div>
+  </div>
+
   <!-- AUTH SCREEN -->
-  <div id="screen-auth" class="center-screen">
+  <div id="screen-auth" class="center-screen hidden">
     <div class="title">🎟️ Golden Bluff</div>
     <div class="subtitle">Claim it. Bluff it. Get away with it — or don't.</div>
     <div class="card-box">
@@ -39,6 +52,7 @@
         <button type="submit">Join Room</button>
       </form>
       <div class="error-msg" id="auth-error"></div>
+      <button id="auth-back-btn" class="link-btn" type="button">← Back to menu</button>
     </div>
   </div>
 
@@ -71,6 +85,46 @@
     </div>
   </div>
 
+  <!-- HOW TO PLAY SCREEN -->
+  <div id="screen-howtoplay" class="center-screen hidden">
+    <div class="title">📖 How to Play</div>
+    <div class="card-box howtoplay-box">
+      <p class="core-loop">Get gold → claim a Character → maybe lie → someone can challenge → being wrong costs you a Character.</p>
+
+      <h3>Objective</h3>
+      <p>Golden Bluff is for 2–6 players. Be the first to collect <b>10 Golden Tickets</b> — or the last player left holding any Character cards at all.</p>
+
+      <h3>Setup</h3>
+      <p>Each player draws 2 secret Character cards and starts with 0 tickets. Nobody else can see your cards — but you can <i>claim</i> to have any Character in the game, whether you actually do or not.</p>
+
+      <h3>Your Turn</h3>
+      <p><b>1. Stable Income</b> — take +1 Golden Ticket automatically. This can't be challenged, and if it brings you to 10, you win instantly.</p>
+      <p><b>2. Make a Claim</b> — announce any Character (except Guard — it's never claimed on your own turn) and its ability, targeting another player if the ability needs one. You may or may not actually have that Character.</p>
+      <p><b>3. Challenge Window</b> — everyone else gets a chance to call CHALLENGE. If nobody does, your claim happens, true or not.</p>
+
+      <h3>Getting Challenged</h3>
+      <p>If you were <b>bluffing</b>: your claim is cancelled, the challenger gains 1 ticket, and you choose one of your own Character cards to discard.</p>
+      <p>If you were <b>telling the truth</b>: you gain 1 ticket for winning the challenge, the challenger discards one of their cards, and your claim still happens. Your revealed card then gets shuffled back into the deck and you draw a fresh secret replacement, so nobody knows what you're holding now.</p>
+
+      <h3>Characters = Your Lives</h3>
+      <p>Your 2 Character cards are also your health. Discard one and you're down to your last life; discard your final card and you're eliminated — your tickets return to the bank.</p>
+
+      <h3>The Royal Counter-Claim</h3>
+      <p>When someone claims Royal, instead of challenging you can claim "I'm also a Royal!" — a counter-claim that goes through the exact same challenge process. If your counter holds up, the original claimant's payout is capped at 1 ticket instead of 2.</p>
+
+      <h3>Guard — the reactive block</h3>
+      <p>Guard is never claimed on your own turn. If you're targeted by a Thief, Seer, or Assassin claim, you may reveal an actual Guard card the instant it's about to happen, blocking it outright. No Guard card in hand, no block.</p>
+
+      <h3>Characters</h3>
+      <div class="char-grid" id="howtoplay-char-grid"></div>
+
+      <h3>Winning</h3>
+      <p>First to 10+ Golden Tickets wins. Reaching 10 through Stable Income wins instantly and can't be stopped — reaching 10 through a claimed ability still has to survive the challenge window first.</p>
+
+      <button id="howtoplay-back-btn" class="link-btn" type="button">← Back to menu</button>
+    </div>
+  </div>
+
   <!-- LOBBY SCREEN -->
   <div id="screen-lobby" class="center-screen hidden">
     <div class="title">Waiting Room</div>
@@ -79,6 +133,7 @@
       <div class="room-code-display" id="lobby-code">----</div>
       <h3>Players</h3>
       <ul class="player-list" id="lobby-players"></ul>
+      <button id="lobby-edit-avatar-btn" class="link-btn" type="button">🎭 Edit my avatar</button>
       <p id="lobby-hint" class="subtitle"></p>
       <button id="start-game-btn" class="primary hidden">Start Game</button>
     </div>
@@ -131,6 +186,10 @@
         <h3>Table</h3>
         <button id="drawer-close-btn" class="icon-btn small">✕</button>
       </div>
+      <details class="panel cheat-sheet-panel">
+        <summary>🧾 Cheat Sheet</summary>
+        <div class="char-grid" id="cheat-sheet-grid"></div>
+      </details>
       <div class="panel">
         <h3>Activity Log</h3>
         <div class="log-panel" id="game-log"></div>

@@ -38,7 +38,7 @@ function loadSavedAvatar() {
 }
 
 const S = {
-  screen: 'auth',       // auth | avatar | lobby | game
+  screen: 'title',      // title | auth | avatar | howtoplay | lobby | game
   myId: null,
   myName: '',
   code: null,
@@ -56,6 +56,7 @@ const S = {
   lastScreen: null,
   avatar: loadSavedAvatar(),   // my own 3D avatar customization
   pendingAuth: null,           // { mode: 'create'|'join', name, code } -- staged while on the avatar screen
+  avatarReturnTo: null,        // 'title' | 'lobby' -- where to return after an anytime avatar edit (outside the join flow)
   avatarPreview: null,         // the live rotating preview renderer (built lazily)
 };
 
@@ -115,7 +116,14 @@ socket.on('state', (pub) => {
   const applyBookkeeping = () => {
     S.prevPub = prevPub;
     S.pub = pub;
-    if (pub.phase === 'lobby') S.screen = 'lobby'; else S.screen = 'game';
+    if (S.screen === 'avatar' && pub.phase === 'lobby') {
+      // Editing your avatar mid-lobby shouldn't get bumped by routine broadcasts --
+      // but DO still pull you into the game screen the instant it actually starts.
+    } else if (pub.phase === 'lobby') {
+      S.screen = 'lobby';
+    } else {
+      S.screen = 'game';
+    }
     if (pub.phase !== 'gameover') S.confettiSpawned = false;
   };
 
@@ -155,6 +163,29 @@ socket.on('chatMessage', (msg) => {
   renderChat();
 });
 
+// ---------- Title screen ----------
+el('title-play-btn').addEventListener('click', () => {
+  AudioFX.sfx('click');
+  S.screen = 'auth';
+  render();
+});
+el('title-avatar-btn').addEventListener('click', () => {
+  AudioFX.sfx('click');
+  S.pendingAuth = null;
+  S.avatarReturnTo = 'title';
+  S.screen = 'avatar';
+  render();
+});
+el('title-howtoplay-btn').addEventListener('click', () => {
+  AudioFX.sfx('click');
+  S.screen = 'howtoplay';
+  render();
+});
+el('howtoplay-back-btn').addEventListener('click', () => {
+  S.screen = 'title';
+  render();
+});
+
 // ---------- Auth screen ----------
 // Both forms stage their intent and hand off to the avatar creator screen first --
 // the actual createRoom/joinRoom call happens once the player confirms their look.
@@ -177,33 +208,62 @@ el('join-form').addEventListener('submit', (e) => {
   render();
 });
 
+el('auth-back-btn').addEventListener('click', () => {
+  S.screen = 'title';
+  render();
+});
+
 el('avatar-back-btn').addEventListener('click', () => {
-  S.pendingAuth = null;
-  S.screen = 'auth';
+  if (S.pendingAuth) {
+    S.pendingAuth = null;
+    S.screen = 'auth';
+  } else {
+    S.screen = S.avatarReturnTo || 'title';
+    S.avatarReturnTo = null;
+  }
   render();
 });
 
 el('avatar-confirm-btn').addEventListener('click', () => {
   const pending = S.pendingAuth;
-  if (!pending) return;
   try { localStorage.setItem('goldenbluff_avatar', JSON.stringify(S.avatar)); } catch (e) { /* best-effort */ }
-  const done = (res) => {
-    if (!res.ok) { S.screen = 'auth'; render(); return showError(res.error); }
-    S.myName = pending.name; S.code = res.code; S.myId = res.playerId;
-    S.pendingAuth = null;
-    S.screen = 'lobby';
-    render();
-  };
-  if (pending.mode === 'create') {
-    socket.emit('createRoom', { name: pending.name, avatar: S.avatar }, done);
-  } else {
-    socket.emit('joinRoom', { name: pending.name, code: pending.code, avatar: S.avatar }, done);
+
+  if (pending) {
+    const done = (res) => {
+      if (!res.ok) { S.screen = 'auth'; render(); return showError(res.error); }
+      S.myName = pending.name; S.code = res.code; S.myId = res.playerId;
+      S.pendingAuth = null;
+      S.screen = 'lobby';
+      render();
+    };
+    if (pending.mode === 'create') {
+      socket.emit('createRoom', { name: pending.name, avatar: S.avatar }, done);
+    } else {
+      socket.emit('joinRoom', { name: pending.name, code: pending.code, avatar: S.avatar }, done);
+    }
+    return;
   }
+
+  // Anytime edit (title menu, or mid-lobby) -- not part of the create/join flow.
+  if (S.avatarReturnTo === 'lobby' && S.code) {
+    socket.emit('updateAvatar', { avatar: S.avatar });
+  }
+  S.screen = S.avatarReturnTo || 'title';
+  S.avatarReturnTo = null;
+  render();
 });
 
 el('start-game-btn').addEventListener('click', () => {
   AudioFX.sfx('click');
   socket.emit('startGame', {}, (res) => { if (!res.ok) alert(res.error); });
+});
+
+el('lobby-edit-avatar-btn').addEventListener('click', () => {
+  AudioFX.sfx('click');
+  S.pendingAuth = null;
+  S.avatarReturnTo = 'lobby';
+  S.screen = 'avatar';
+  render();
 });
 
 // ---------- Avatar creator screen ----------
@@ -310,6 +370,24 @@ el('seer-toast-close').addEventListener('click', () => { S.seerToast = null; ren
 // Slide-out drawer (activity log + table talk) keeps the table view uncluttered.
 el('drawer-toggle-btn').addEventListener('click', () => el('log-drawer').classList.remove('hidden'));
 el('drawer-close-btn').addEventListener('click', () => el('log-drawer').classList.add('hidden'));
+
+// Static character-reference grids (How to Play screen + in-game cheat sheet) -- built
+// once from the same CHARACTERS data everything else uses, so they can never drift.
+function buildCharacterReferenceGrid(containerId) {
+  const grid = el(containerId);
+  if (!grid) return;
+  CHARACTER_ORDER.forEach((key) => {
+    const row = document.createElement('div');
+    row.className = `char-btn ${charClass(key)}`;
+    row.innerHTML = `
+      <div class="c-title"><span class="c-icon-inline">${charIconHTML(key)}</span>${CHARACTERS[key].name}</div>
+      <div class="c-desc">${CHARACTERS[key].desc}</div>
+    `;
+    grid.appendChild(row);
+  });
+}
+buildCharacterReferenceGrid('howtoplay-char-grid');
+buildCharacterReferenceGrid('cheat-sheet-grid');
 
 // ---------- Effects layer (survives normal re-renders) ----------
 function fxLayer() { return el('fx-layer'); }
@@ -671,8 +749,10 @@ function reactToTicketDeltas(prevPub, pub) {
 
 // ---------- Render ----------
 function render() {
+  el('screen-title').classList.toggle('hidden', S.screen !== 'title');
   el('screen-auth').classList.toggle('hidden', S.screen !== 'auth');
   el('screen-avatar').classList.toggle('hidden', S.screen !== 'avatar');
+  el('screen-howtoplay').classList.toggle('hidden', S.screen !== 'howtoplay');
   el('screen-lobby').classList.toggle('hidden', S.screen !== 'lobby');
   el('screen-game').classList.toggle('hidden', S.screen !== 'game');
 
