@@ -871,26 +871,50 @@ function renderGame() {
   }
 }
 
-// Places every OTHER player around the top arc of the table ring; "you" live in the hand-fan below.
+// Places every OTHER player either onto the live 3D bar-table scene (seat positions
+// projected to screen space) or, if the 3D scene isn't available, around the top arc
+// of the table ring exactly as before. "You" live in the hand-fan below either way.
 function renderSeats(pub) {
   const layer = el('seats-layer');
   layer.innerHTML = '';
   const others = pub.players.filter((p) => p.id !== S.myId);
   const n = others.length;
 
-  others.forEach((p, i) => {
-    const angleDeg = n === 1 ? 0 : -75 + (150 * i) / (n - 1);
-    const rad = (angleDeg * Math.PI) / 180;
-    const radiusPct = 46;
-    const leftPct = 50 + radiusPct * Math.sin(rad);
-    const topPct = 50 - radiusPct * Math.cos(rad);
+  if (!S.scene3d && !S.scene3dFailed && window.Scene3D) {
+    try {
+      S.scene3d = window.Scene3D.createTableScene(el('table-canvas'));
+    } catch (e) {
+      console.error('Scene3D init failed, falling back to 2D table', e);
+      S.scene3dFailed = true;
+      S.scene3d = null;
+    }
+  }
 
+  let positions = null;
+  if (S.scene3d) {
+    try {
+      S.scene3d.update(
+        others.map((p) => ({ id: p.id, avatar: p.avatar, alive: p.alive })),
+        S.avatar,
+        { activePlayerId: pub.activePlayerId }
+      );
+      positions = S.scene3d.getSeatScreenPositions(others.map((p) => p.id));
+    } catch (e) {
+      console.error('Scene3D update failed, falling back to 2D table', e);
+      S.scene3dFailed = true;
+      S.scene3d = null;
+      positions = null;
+    }
+  }
+
+  others.forEach((p, i) => {
     const prev = prevPlayerById(p.id);
     const delta = prev ? p.tickets - prev.tickets : 0;
     const justEliminated = prev && prev.alive && !p.alive;
     const pulseClass = delta > 0 ? 'pulse-gain' : delta < 0 ? 'pulse-loss' : '';
     const deltaHtml = delta !== 0 ? `<span class="ticket-delta ${delta > 0 ? 'gain' : 'loss'}">${delta > 0 ? '+' : ''}${delta}</span>` : '';
     const isReacting = pub.pendingGuardReaction && pub.pendingGuardReaction.targetId === p.id;
+    const seatPos = positions && positions[p.id];
 
     const seat = document.createElement('div');
     seat.className = 'seat';
@@ -898,10 +922,26 @@ function renderSeats(pub) {
     if (p.id === pub.activePlayerId) seat.classList.add('is-turn');
     if (!p.alive) seat.classList.add('is-dead');
     if (justEliminated) seat.classList.add('just-eliminated');
-    seat.style.left = leftPct + '%';
-    seat.style.top = topPct + '%';
-    const snapshot = p.alive ? getAvatarSnapshot(p.avatar, null) : null;
-    const avatarInner = snapshot ? `<img class="avatar-snapshot" src="${snapshot}" alt="">` : (p.alive ? initials(p.name) : '💀');
+
+    if (seatPos) {
+      seat.classList.add('seat-3d');
+      seat.style.left = seatPos.x + 'px';
+      seat.style.top = seatPos.y + 'px';
+    } else {
+      const angleDeg = n === 1 ? 0 : -75 + (150 * i) / (n - 1);
+      const rad = (angleDeg * Math.PI) / 180;
+      const radiusPct = 46;
+      seat.style.left = (50 + radiusPct * Math.sin(rad)) + '%';
+      seat.style.top = (50 - radiusPct * Math.cos(rad)) + '%';
+    }
+
+    let avatarInner;
+    if (seatPos) {
+      avatarInner = ''; // the avatar itself is rendered live in the 3D scene beneath this label
+    } else {
+      const snapshot = p.alive ? getAvatarSnapshot(p.avatar, null) : null;
+      avatarInner = snapshot ? `<img class="avatar-snapshot" src="${snapshot}" alt="">` : (p.alive ? initials(p.name) : '💀');
+    }
     seat.innerHTML = `
       <div class="seat-avatar">${avatarInner}${isReacting ? '<span class="seat-shield">🛡️</span>' : ''}</div>
       <div class="seat-name">${p.name}${!p.connected ? ' 💤' : ''}</div>
