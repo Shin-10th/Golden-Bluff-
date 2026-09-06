@@ -952,6 +952,20 @@ function renderSeats(pub) {
   });
 }
 
+// The old percentage-based seat layout tracked a window resize for free via CSS. The 3D
+// scene's projected pixel positions don't -- they're only recomputed on the next renderSeats()
+// call (i.e. the next server state broadcast) -- so without this, resizing the window would
+// leave seat name/ticket/heart labels sitting at their pre-resize spot until something else
+// happened to trigger a re-render. Nudge them back into place explicitly instead.
+let resizeRaf = null;
+window.addEventListener('resize', () => {
+  if (resizeRaf) return;
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = null;
+    if (S.pub && S.screen === 'game') renderSeats(S.pub);
+  });
+});
+
 // Your own ticket count — you're excluded from the seats layer, so this is
 // the only place your own tickets are shown. Same delta pulse as everyone else.
 function renderMyStats(pub) {
