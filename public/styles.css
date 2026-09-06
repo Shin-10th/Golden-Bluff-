@@ -603,6 +603,19 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   display: block;
   overflow: hidden;
   z-index: 0;
+  filter: saturate(1.1) contrast(1.06) brightness(1.03);
+}
+/* Cheap "post-processing": darkens the rim of the 3D scene so the eye settles on the
+   center of the table, the way a real camera lens (or Liar's Bar's own render) vignettes.
+   A plain div rather than a WebGL effect -- no postprocessing addons are vendored, and this
+   reads the same at a fraction of the cost. */
+.table-vignette {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, transparent 55%, rgba(10, 6, 4, 0.55) 100%);
+  z-index: 1;
 }
 .table-ring.my-turn { animation: ringGlow 2.4s ease-in-out infinite; }
 @keyframes ringGlow {
