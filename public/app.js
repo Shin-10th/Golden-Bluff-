@@ -88,6 +88,15 @@ function buildCharCard(key, opts = {}) {
   `;
   if (opts.onClick && !opts.disabled) {
     card.onclick = () => { AudioFX.sfx('click'); opts.onClick(); };
+    // These are plain divs (a hand card also needs a non-interactive display variant), so
+    // give the clickable ones real keyboard support: focusable, announced as a button, and
+    // Enter/Space activates them the way a native <button> would.
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Claim ${meta.name}`);
+    card.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); }
+    };
   }
   return card;
 }
@@ -277,17 +286,26 @@ function buildAvatarCreatorUI() {
   avatarUIBuilt = true;
   const { AVATAR_OPTIONS } = window.Avatar3D;
 
+  const makeSwatchKeydown = (swatchEl) => (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); swatchEl.click(); }
+  };
   AVATAR_OPTIONS.bodyColors.forEach((color) => {
     const sw = document.createElement('div');
     sw.className = 'swatch';
     sw.style.background = color;
     sw.dataset.color = color;
     sw.title = color;
+    sw.setAttribute('tabindex', '0');
+    sw.setAttribute('role', 'button');
+    sw.setAttribute('aria-label', `Body color ${color}`);
     sw.onclick = () => { S.avatar.bodyColor = color; render(); };
+    sw.onkeydown = makeSwatchKeydown(sw);
     el('avatar-body-swatches').appendChild(sw);
 
     const tagSw = sw.cloneNode(true);
+    tagSw.setAttribute('aria-label', `Name tag color ${color}`);
     tagSw.onclick = () => { S.avatar.tagColor = color; render(); };
+    tagSw.onkeydown = makeSwatchKeydown(tagSw);
     el('avatar-tag-swatches').appendChild(tagSw);
   });
 
@@ -860,6 +878,7 @@ function renderGame() {
   if (pub.phase === 'gameover') {
     const winner = playerById(pub.winnerId);
     el('winner-banner').classList.remove('hidden');
+    el('winner-backdrop').classList.remove('hidden');
     el('winner-banner').innerHTML = `
       <span class="trophy">🏆</span>
       <h2>${winner ? winner.name : 'Someone'} WINS!</h2>
@@ -868,6 +887,7 @@ function renderGame() {
     if (!S.confettiSpawned) { spawnConfetti(); S.confettiSpawned = true; }
   } else {
     el('winner-banner').classList.add('hidden');
+    el('winner-backdrop').classList.add('hidden');
   }
 }
 
@@ -943,10 +963,15 @@ function renderSeats(pub) {
       avatarInner = snapshot ? `<img class="avatar-snapshot" src="${snapshot}" alt="">` : (p.alive ? initials(p.name) : '💀');
     }
     seat.innerHTML = `
-      <div class="seat-avatar">${avatarInner}${isReacting ? '<span class="seat-shield">🛡️</span>' : ''}</div>
-      <div class="seat-name">${p.name}${!p.connected ? ' 💤' : ''}</div>
-      <div class="seat-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</div>
-      <div class="seat-hearts">${p.alive ? '❤️'.repeat(p.cardCount) : ''}</div>
+      <div class="seat-avatar">${avatarInner}</div>
+      <div class="seat-plate">
+        ${isReacting ? '<span class="seat-shield">🛡️</span>' : ''}
+        <div class="seat-name">${p.name}${!p.connected ? ' <span class="seat-away">💤</span>' : ''}</div>
+        <div class="seat-plate-row">
+          <span class="seat-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</span>
+          <span class="seat-hearts">${p.alive ? '❤️'.repeat(p.cardCount) : ''}</span>
+        </div>
+      </div>
     `;
     layer.appendChild(seat);
   });

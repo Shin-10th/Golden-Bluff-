@@ -22,9 +22,44 @@
   --text: #f3ecd9;
   --muted: #b0a3c9;
   --danger: #e2554a;
+  --danger-bright: #f06c60;
   --ok: #4ecb82;
+
+  /* ---- Reusable visual system: radii, shadows, motion, focus, spacing ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --shadow-sm: 0 2px 6px rgba(0,0,0,0.35);
+  --shadow-md: 0 6px 18px rgba(0,0,0,0.45);
+  --shadow-lg: 0 16px 44px rgba(0,0,0,0.55);
+  --shadow-glow-gold: 0 0 22px rgba(212,175,55,0.5);
+
+  --ease-standard: cubic-bezier(.2,.8,.2,1);
+  --ease-pop: cubic-bezier(.34,1.56,.64,1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+
+  --focus-ring: 0 0 0 3px rgba(244,213,115,0.55);
+  --control-height: 2.6rem;
+
+  /* ---- Z-index scale: every layered element on the game screen is named here so a
+     new layer never again silently blocks the one below it (see the .seats-layer
+     click-through regression fixed 2026-09-10). Higher = painted later = on top. ---- */
+  --z-scene-canvas: 0;    /* the live 3D table WebGL canvas */
+  --z-scene-vignette: 1;  /* CSS rim-darkening overlay on the canvas */
+  --z-scene-labels: 2;    /* seat nameplates + bank/deck piles, floating over the scene */
+  --z-hud: 4;             /* top bar, bottom (hand/chip-bar) zone */
+  --z-toast: 50;          /* seer private-reveal toast */
+  --z-drawer: 100;        /* activity log / table talk slide-out */
+  --z-fx: 200;            /* ephemeral challenge flash / spotlight / confetti layer */
+  --z-modal-backdrop: 250;
+  --z-modal: 251;         /* winner banner and any future modal */
+  --z-audio: 300;         /* always-on-top mute toggle */
 }
 * { box-sizing: border-box; }
+:focus-visible { outline: none; }
 body {
   margin: 0;
   font-family: 'Georgia', 'Segoe UI', system-ui, sans-serif;
@@ -60,13 +95,17 @@ button {
 button:hover:not(:disabled) { background: var(--gold); color: #1a1410; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(212,175,55,0.3); }
 button:active:not(:disabled) { transform: translateY(0) scale(0.97); box-shadow: none; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:focus-visible { box-shadow: var(--focus-ring); }
 button.primary { background: var(--gold); color: #1a1410; font-weight: bold; }
 button.primary:hover:not(:disabled) { background: var(--gold-bright); }
 button.danger { background: var(--danger); color: white; }
-button.danger:hover:not(:disabled) { background: #f06c60; box-shadow: 0 6px 16px rgba(226,85,74,0.4); }
+button.danger:hover:not(:disabled) { background: var(--danger-bright); box-shadow: 0 6px 16px rgba(226,85,74,0.4); }
 /* Cool secondary action (e.g. "Pass") — a deliberate warm/cool contrast against danger red. */
 button.secondary { background: transparent; border: 2px solid var(--accent-cool); color: var(--accent-cool-bright); }
 button.secondary:hover:not(:disabled) { background: var(--accent-cool); color: #0c1c24; box-shadow: 0 6px 16px rgba(95,179,217,0.35); }
+/* Primary/secondary/danger share one control height so a button row always lines up,
+   whether it's the claim confirm button or a row of Challenge/Royal-too/Pass. */
+button.primary, button.secondary, button.danger { min-height: var(--control-height); }
 input[type=text] {
   font-family: inherit;
   padding: 0.55rem 0.75rem;
@@ -75,7 +114,9 @@ input[type=text] {
   background: #1a1410;
   color: var(--text);
   font-size: 1rem;
+  min-height: var(--control-height);
 }
+input[type=text]:focus-visible { border-color: var(--gold-bright); box-shadow: var(--focus-ring); }
 h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 
 #app { max-width: 1000px; margin: 0 auto; padding: 1.5rem 1rem 4rem; position: relative; }
@@ -132,6 +173,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 }
 .swatch:hover { transform: scale(1.12); }
 .swatch.selected { border-color: var(--gold-bright); box-shadow: 0 0 0 2px var(--panel), 0 0 10px var(--gold-bright); }
+.swatch:focus-visible { box-shadow: var(--focus-ring); }
 .option-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .option-btn {
   background: var(--panel-2); border: 2px solid var(--border); border-radius: 10px;
@@ -139,11 +181,13 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 }
 .option-btn:hover { border-color: var(--gold); }
 .option-btn.selected { border-color: var(--gold-bright); background: var(--gold-dim); color: #1a1410; font-weight: bold; }
+.option-btn:focus-visible { box-shadow: var(--focus-ring); }
 .link-btn {
   background: transparent; border: none; color: var(--muted); text-decoration: underline;
   font-size: 0.85rem; padding: 0.2rem;
 }
 .link-btn:hover { color: var(--text); background: transparent; transform: none; box-shadow: none; }
+.link-btn:focus-visible { box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 
 /* Baked avatar snapshots (seats, hand, cards) -- rendered once off-screen and reused as a
    plain image everywhere else, so we never keep more than one live WebGL context around. */
@@ -269,11 +313,16 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 }
 #screen-game .winner-banner:not(.hidden) {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  z-index: 60; max-width: 420px; width: 90vw;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
+  z-index: var(--z-modal); max-width: 420px; width: 90vw;
+  box-shadow: var(--shadow-lg);
 }
-#screen-game .winner-banner:not(.hidden)::before {
-  content: ''; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: -1;
+/* A real sibling backdrop (toggled alongside .winner-banner in app.js) instead of a
+   negative-z ::before trick -- the pseudo-element approach never actually dimmed the page,
+   since its z-index: -1 only ordered it within .winner-banner's own stacking context, not
+   the whole document. */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(8, 6, 10, 0.6);
+  backdrop-filter: blur(2px); z-index: var(--z-modal-backdrop);
 }
 .winner-banner h2 {
   font-size: 2.2rem; margin-bottom: 0.4rem;
@@ -286,7 +335,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 
 .toast {
   position: fixed; top: 1rem; right: 1rem; background: var(--panel); border: 2px solid var(--gold-bright);
-  border-radius: 10px; padding: 1rem 1.2rem; max-width: 320px; z-index: 50;
+  border-radius: 10px; padding: 1rem 1.2rem; max-width: 320px; z-index: var(--z-toast);
   box-shadow: 0 6px 20px rgba(0,0,0,0.5);
   animation: riseIn 0.35s ease both;
 }
@@ -294,7 +343,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .toast .toast-close { margin-top: 0.6rem; }
 
 /* Effects layer: ephemeral overlays that must survive normal re-renders */
-#fx-layer { position: fixed; inset: 0; pointer-events: none; z-index: 200; overflow: hidden; }
+#fx-layer { position: fixed; inset: 0; pointer-events: none; z-index: var(--z-fx); overflow: hidden; }
 
 .challenge-flash {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.6);
@@ -578,10 +627,11 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 
 .top-bar { position: relative; z-index: 5; display: flex; justify-content: space-between; align-items: center; }
 .icon-btn {
-  width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
   background: var(--panel); border: 2px solid var(--gold); font-size: 1.1rem; padding: 0;
 }
-.icon-btn.small { width: 30px; height: 30px; font-size: 0.9rem; }
+.icon-btn.small { width: 34px; height: 34px; font-size: 0.9rem; }
+.icon-btn:focus-visible { box-shadow: var(--focus-ring); }
 
 .table-wrap { position: relative; z-index: 3; flex: 1; display: flex; align-items: center; justify-content: center; padding: 0.5rem 0; min-height: 320px; }
 .table-ring {
@@ -591,7 +641,16 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #342a1c, var(--bg) 72%);
   border: 9px solid var(--gold);
-  box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6);
+  /* A touch of directional lighting on top of the existing outer/inner shadows -- a soft
+     highlight from above and a deeper shadow underneath -- so the rim reads as a lit
+     physical object rather than a flat-colored ring. (box-shadow, not border-image: an
+     image border ignores border-radius and would turn this circle into a rectangle.) */
+  box-shadow:
+    0 0 0 4px #1a130c,
+    0 24px 50px rgba(0,0,0,0.55),
+    inset 0 0 50px rgba(0,0,0,0.6),
+    inset 0 7px 16px rgba(255,255,255,0.06),
+    inset 0 -10px 20px rgba(0,0,0,0.3);
   transition: box-shadow 0.4s ease;
 }
 #table-canvas {
@@ -602,7 +661,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   border-radius: 50%;
   display: block;
   overflow: hidden;
-  z-index: 0;
+  z-index: var(--z-scene-canvas);
   filter: saturate(1.1) contrast(1.06) brightness(1.03);
 }
 /* Cheap "post-processing": darkens the rim of the 3D scene so the eye settles on the
@@ -615,20 +674,14 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   border-radius: 50%;
   pointer-events: none;
   background: radial-gradient(circle, transparent 55%, rgba(10, 6, 4, 0.55) 100%);
-  z-index: 1;
+  z-index: var(--z-scene-vignette);
 }
 .table-ring.my-turn { animation: ringGlow 2.4s ease-in-out infinite; }
 @keyframes ringGlow {
-  0%, 100% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), 0 0 34px 4px rgba(212,175,55,0.35); }
-  50% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), 0 0 60px 12px rgba(212,175,55,0.65); }
+  0%, 100% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), inset 0 7px 16px rgba(255,255,255,0.06), inset 0 -10px 20px rgba(0,0,0,0.3), 0 0 34px 4px rgba(212,175,55,0.35); }
+  50% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), inset 0 7px 16px rgba(255,255,255,0.06), inset 0 -10px 20px rgba(0,0,0,0.3), 0 0 60px 12px rgba(212,175,55,0.65); }
 }
-/* Purely a positioning container for the .seat labels -- never itself interactive -- but
-   since it fully covers the table ring (inset: 0) and sits above #table-center/piles in the
-   stacking order, its own transparent box was silently swallowing every click meant for the
-   Challenge/Pass/counter-claim buttons underneath it. pointer-events: none lets clicks pass
-   through to whatever is actually beneath; individual .seat children can still opt back into
-   pointer-events: auto if a future feature needs a seat itself to be clickable. */
-.seats-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.seats-layer { position: absolute; inset: 0; z-index: var(--z-scene-labels); pointer-events: none; }
 
 /* Bank (ticket supply) and Deck (character supply) piles — fixed props sitting
    in the ring's bottom arc, which is otherwise empty (seats only occupy the
@@ -636,7 +689,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
    animations use these as their bank/deck endpoint. */
 .pile {
   position: absolute; top: 83%; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; z-index: 2; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; z-index: var(--z-scene-labels); pointer-events: none;
 }
 .pile-bank { left: 31%; }
 .pile-deck { left: 69%; }
@@ -665,7 +718,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .pile-cards .pc:nth-child(3) { transform: rotate(-1deg); }
 .seat {
   position: absolute; top: 0; left: 0; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 0.2rem; width: 84px;
+  display: flex; flex-direction: column; align-items: center; gap: 0.25rem; width: 92px;
 }
 .seat-avatar {
   width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
@@ -674,14 +727,55 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   border: 3px solid #1a130c; box-shadow: 0 4px 10px rgba(0,0,0,0.45);
   position: relative;
 }
-.seat.is-turn .seat-avatar { border-color: var(--gold-bright); box-shadow: 0 0 0 4px rgba(201,162,39,0.5), 0 4px 14px rgba(0,0,0,0.5); animation: turnPulse 1.8s ease-in-out infinite; }
 .seat.is-dead .seat-avatar { filter: grayscale(1); opacity: 0.5; }
-.seat-shield { position: absolute; top: -6px; right: -6px; font-size: 1rem; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6)); }
+/* In the live 3D scene the real avatar renders in the WebGL canvas beneath this label --
+   .seat-avatar collapses to an invisible anchor point (roughly where the head sits) so the
+   nameplate below lands in the right spot, and the turn/reacting treatment moves onto the
+   plate itself instead (there's no visible circle left to glow). */
 .seat.seat-3d .seat-avatar { width: 10px; height: 10px; background: transparent; border: none; box-shadow: none; }
-.seat.seat-3d.is-turn .seat-avatar { animation: none; box-shadow: none; }
-.seat-name { font-size: 0.78rem; font-weight: bold; color: var(--text); text-shadow: 0 1px 3px rgba(0,0,0,0.8); white-space: nowrap; max-width: 84px; overflow: hidden; text-overflow: ellipsis; }
-.seat-tickets { font-size: 0.72rem; color: var(--gold-bright); text-shadow: 0 1px 3px rgba(0,0,0,0.8); position: relative; }
-.seat-hearts { font-size: 0.68rem; }
+
+/* The player identity area: name, ticket count, and remaining lives in one compact,
+   legible card that reads clearly over either the 3D table or the 2D fallback ring. */
+.seat-plate {
+  background: rgba(14, 10, 8, 0.68);
+  border: 1.5px solid rgba(255,255,255,0.16);
+  border-radius: var(--radius-md);
+  padding: 0.3rem 0.55rem;
+  min-width: 84px;
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(3px);
+  position: relative;
+  transition: border-color var(--duration-base) var(--ease-standard), box-shadow var(--duration-base) var(--ease-standard), transform var(--duration-base) var(--ease-standard);
+}
+.seat-name {
+  font-size: 0.78rem; font-weight: bold; color: var(--text);
+  white-space: nowrap; max-width: 96px; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 0.25rem; justify-content: center;
+}
+.seat-plate-row { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 0.1rem; }
+.seat-tickets { font-size: 0.74rem; color: var(--gold-bright); position: relative; }
+.seat-hearts { font-size: 0.72rem; letter-spacing: -0.05em; }
+.seat-away { opacity: 0.8; }
+
+/* Active turn: the plate itself glows gold, since the avatar circle may not be visible. */
+.seat.is-turn .seat-plate {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 2px rgba(244,213,115,0.3), var(--shadow-glow-gold);
+  animation: turnPulse 1.8s ease-in-out infinite;
+}
+/* Eliminated: the whole identity card recedes rather than just the avatar, and the name
+   gets a clear skull marker instead of relying on a greyed-out avatar alone to read as "out". */
+.seat.is-dead .seat-plate { opacity: 0.55; filter: grayscale(0.5); border-color: rgba(255,255,255,0.08); box-shadow: none; animation: none; }
+.seat.is-dead .seat-name::before { content: '💀 '; }
+/* Someone about to lose a life to this seat's action gets a beat of shake, same as before. */
+.seat.just-eliminated .seat-plate { animation: eliminateShake 0.6s ease; }
+
+.seat-shield {
+  position: absolute; top: -10px; right: -10px; font-size: 1.05rem;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.7));
+  background: var(--panel); border: 2px solid var(--accent-cool); border-radius: 50%;
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+}
 
 .table-center {
   position: absolute; inset: 15%; border-radius: 50%;
@@ -710,7 +804,11 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   max-width: 94vw;
 }
 .chip-bar:empty { display: none; }
-.chip-bar .chip-char-grid { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
+/* align-items: center (not the flex default of stretch) matters here: this row can mix a
+   tall TCG-style char-card with a plain pill .chip (e.g. Guard's "don't reveal" decline
+   button) -- stretch would force the short pill to match the tall card's height, and at
+   that height its border-radius: 999px renders it as a huge circle instead of a pill. */
+.chip-bar .chip-char-grid { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; align-items: center; }
 
 /* Simple pill buttons for non-card choices (target picking, decline, etc.) */
 .chip {
@@ -720,6 +818,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .chip .c-icon-inline { width: 1.1em; height: 1.1em; margin-right: 0; }
 .chip.selected { background: var(--gold); color: #1a1410; }
 .chip.selected .c-icon-inline { color: #1a1410; }
+.chip:focus-visible { box-shadow: var(--focus-ring); }
 
 /* Trading-card style Character card — modeled on a Pokémon-style TCG frame:
    an ornate holo border, a framed art window, and (on the bigger hand
@@ -755,6 +854,13 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .char-card.clickable:hover {
   transform: translateY(-6px) scale(1.03);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.5), 0 0 22px var(--char-glow, rgba(212,175,55,0.5));
+}
+/* These cards are plain divs with a click handler (so a hand card can also render as a
+   non-interactive display-only variant) -- app.js gives clickable ones tabindex="0" and a
+   keydown handler so Enter/Space activate them like a real button, and this makes that
+   keyboard focus visible. */
+.char-card.clickable:focus-visible {
+  box-shadow: var(--focus-ring), inset 0 0 0 1px rgba(255,255,255,0.08), 0 10px 22px rgba(0,0,0,0.5);
 }
 .char-card.selected { background: linear-gradient(160deg, var(--gold-bright), var(--gold)); box-shadow: 0 0 0 3px var(--char-glow, rgba(201,162,39,0.6)); }
 .char-card.selected .c-name,
@@ -829,7 +935,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .cheat-sheet-panel .c-desc { font-size: 0.74rem; }
 
 .log-drawer {
-  position: fixed; top: 0; right: 0; height: 100vh; width: min(360px, 90vw); z-index: 100;
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(360px, 90vw); z-index: var(--z-drawer);
   background: #1a130c; border-left: 2px solid var(--gold); padding: 1rem; overflow-y: auto;
   box-shadow: -10px 0 30px rgba(0,0,0,0.5);
   animation: slideInRight 0.25s ease both;
@@ -840,14 +946,37 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 @keyframes slowSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 @media (max-width: 640px) {
-  .table-ring { width: min(420px, 88vw); }
-  .seat { width: 64px; }
+  .table-ring { width: min(380px, 84vw); }
+  .seat { width: 72px; }
   .seat-avatar { width: 42px; height: 42px; font-size: 1.05rem; }
-  .seat-name { font-size: 0.68rem; max-width: 64px; }
+  .seat-plate { min-width: 68px; padding: 0.25rem 0.45rem; }
+  .seat-name { font-size: 0.7rem; max-width: 76px; }
   .char-card.char-card--hand { width: 132px; padding: 0.45rem 0.45rem 0.5rem; }
   .char-card.char-card--hand .cc-art-icon { width: 46px; height: 46px; }
   .char-card { width: 92px; }
-  .hand-fan { min-height: 210px; }
+  .hand-fan { min-height: 200px; }
+}
+/* Small phones: the ring was still eating enough vertical space that the hand and its
+   confirm button needed a long scroll to reach. Shrinking the table further (rather than
+   just the seats/cards) is what actually buys that room back. Placed after the 640px block
+   so its smaller values win at narrower widths instead of being overridden by it. */
+@media (max-width: 420px) {
+  .table-scene { padding: 0.5rem 0.6rem 0.6rem; gap: 0.25rem; }
+  .top-bar { margin-bottom: -0.2rem; }
+  .table-wrap { min-height: 170px; padding: 0.1rem 0; }
+  .table-ring { width: min(190px, 66vw); }
+  .seat { width: 54px; }
+  .seat-plate { padding: 0.18rem 0.35rem; min-width: 50px; }
+  .seat-name { font-size: 0.58rem; max-width: 58px; }
+  .seat-tickets, .seat-hearts { font-size: 0.56rem; }
+  .pile-coins, .pile-cards { transform: scale(0.8); }
+  .pile-label { font-size: 0.55rem; }
+  .tc-status { font-size: 0.8rem; }
+  .hand-fan { min-height: 165px; }
+  .char-card.char-card--hand { width: 102px; padding: 0.35rem 0.35rem 0.4rem; }
+  .char-card.char-card--hand .cc-art-icon { width: 36px; height: 36px; }
+  .char-card.char-card--hand .c-name { font-size: 0.9rem; }
+  .chip-bar { padding: 0.5rem 0.6rem; gap: 0.4rem; }
 }
 
 /* ================= Screen transitions ================= */
@@ -897,7 +1026,7 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 
 /* ================= Audio toggle ================= */
 .audio-toggle {
-  position: fixed; bottom: 1rem; left: 1rem; z-index: 300;
+  position: fixed; bottom: 1rem; left: 1rem; z-index: var(--z-audio);
   background: var(--panel); border: 2px solid var(--gold);
 }
 .audio-toggle:hover:not(:disabled) { background: var(--gold); }
