@@ -18,10 +18,20 @@ function cssColor(varName, fallback) {
 }
 
 // ---------- Procedural canvas textures (no external image assets available) ----------
-// A tileable wood-grain diffuse texture for the bar table: a base wood tone with soft,
-// slightly-wavy darker streaks running along one axis, the way plank/lathe wood grain reads
-// even at a small size. Same "draw it on a 2D canvas, hand it to Three.js" technique
-// avatar3d.js already uses for its face decals.
+// A wood-grain diffuse texture for the bar table.
+//
+// CylinderGeometry's end-cap UVs are NOT the (cosθ, sinθ) polar mapping that name suggests
+// -- checked directly against the vendored three.js build: the cap's center vertex is
+// uv=(0.5, 0.5) and EVERY rim vertex is uv=(θ/2π, 1.0) -- i.e. u sweeps the angle, v is a
+// pure function of radius alone (0.5 at the center, 1.0 at the rim). A texture that varies
+// by CANVAS ROW (a horizontal stripe design, like this one) therefore paints exactly one
+// solid ring per row -- correct. A texture that instead varies by distance from the
+// canvas's own center in XY pixel space (concentric circles drawn on the canvas) does NOT
+// line up with that -- a single drawn "ring" spans many different actual v-values as its
+// angle sweeps, and 40 of those overlapping was exactly what produced the smeared, nearly
+// solid center blob during testing 2026-09-10. Horizontal stripes + wrapS/T repeat(1,2)
+// (so the cap's used v-range, 0.5-1.0, stretches back out to the full drawn image instead
+// of only reading its bottom half) is the version that actually renders as wood grain.
 function makeWoodTexture() {
   const w = 256, h = 256;
   const c = document.createElement('canvas');
@@ -43,66 +53,28 @@ function makeWoodTexture() {
   }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(2, 2);
+  tex.repeat.set(1, 2);
   return tex;
 }
 
-// A subtle stone/tile floor texture: a muted base with a faint grid of joint lines, so the
-// floor doesn't read as one flat, perfectly uniform color under the table.
-function makeFloorTexture(baseColorHex) {
-  const w = 256, h = 256;
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = baseColorHex;
-  ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-  ctx.lineWidth = 2;
-  const step = w / 4;
-  for (let i = 0; i <= 4; i++) {
-    ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, h); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(w, i * step); ctx.stroke();
-  }
-  ctx.fillStyle = 'rgba(255,255,255,0.03)';
-  for (let i = 0; i < 60; i++) {
-    ctx.fillRect(Math.random() * w, Math.random() * h, 2, 2);
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(6, 6);
-  return tex;
-}
-
-// ---------- Room + table geometry, built once ----------
+// ---------- Table geometry, built once ----------
+// No modeled floor or walls: Aki asked for a Liar's Bar look with "no background" --
+// this used to build a floor disc (radius 9) and a wraparound wall cylinder around the
+// table, which (a) fought CSS for the job of "what the room looks like", (b) was often
+// the actual cause of the flat-black-circle look reported 2026-09-10 (an unlit floor
+// disc peeking past the table edge once the camera pulled back far enough to see it),
+// and (c) added rendering cost for a room nobody asked to see. The renderer is
+// alpha:true, so with nothing behind the table, the .table-ring div's own CSS gradient
+// (styles.css) shows straight through as the "room" -- a moody backdrop for near zero
+// cost, the same trick Liar's Bar's own blurred background uses.
 function buildRoom(scene) {
-  const floorColor = cssColor('--panel-2', '#2b2440');
-  const wallColor = new THREE.Color('#3d2a1c'); // warm tavern-wall brown, not the app's near-black --bg
   const trimColor = cssColor('--gold', '#d4af37');
-
-  const floor = new THREE.Mesh(
-    new THREE.CircleGeometry(9, 32),
-    new THREE.MeshStandardMaterial({ map: makeFloorTexture('#' + floorColor.getHexString()), roughness: 0.95 })
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -1.55;
-  floor.receiveShadow = true;
-  scene.add(floor);
-
-  const wall = new THREE.Mesh(
-    new THREE.CylinderGeometry(9, 9, 20, 32, 1, true, Math.PI * 0.15, Math.PI * 1.7),
-    new THREE.MeshStandardMaterial({
-      color: wallColor, roughness: 0.92, side: THREE.BackSide,
-      emissive: new THREE.Color('#2a160a'), emissiveIntensity: 0.35,
-    })
-  );
-  wall.position.y = 1.6;
-  scene.add(wall);
 
   // Round bar table, dark wood (procedural grain texture) with a thin gold trim ring.
   const woodTex = makeWoodTexture();
   const table = new THREE.Mesh(
     new THREE.CylinderGeometry(2.5, 2.6, 0.22, 40),
-    new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.55, metalness: 0.05 })
+    new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.65, metalness: 0.05 })
   );
   table.position.y = -1.0;
   table.castShadow = true;
@@ -142,7 +114,12 @@ function buildStool(x, z, ry) {
 }
 
 function buildLights(scene) {
-  const key = new THREE.PointLight(0xffe3b0, 22, 16, 2);
+  // intensity 22 with no tone mapping on the renderer (see createTableScene) clipped
+  // straight to a flat, blown-out gold disc on the wood right under the light -- barely
+  // visible when the table was small and distant, impossible to miss once it fills most
+  // of the screen. Softer intensity + ACES tone mapping (below) turns that into an actual
+  // warm highlight instead of a hard-edged hotspot.
+  const key = new THREE.PointLight(0xffe3b0, 12, 16, 2);
   key.position.set(0, 3.4, 2.5);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
@@ -190,9 +167,16 @@ function arcPositions(n, centerDeg, R, spanDeg) {
 
 export function createTableScene(canvas) {
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 40);
-  camera.position.set(0, 3.3, 6.4);
-  camera.lookAt(0, -1.0, 0);
+  // Closer and lower than the 2026-09-10 "fix the deformity" pass: that pass pulled the
+  // camera back far enough to stop the near table edge from distorting into a dark dome,
+  // but a distant, near-top-down shot is also what made every seated character shrink to
+  // a small blob on the rim. Liar's Bar sits close over the table so whoever's opposite
+  // you reads as a real character, not a token -- so pull back in, but keep the FOV
+  // moderate (not the old close-in 42@5.6 that caused the distortion) so the near edge
+  // stays a clean ellipse instead of a blob.
+  const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 40);
+  camera.position.set(0, 2.05, 4.5);
+  camera.lookAt(0, -0.55, 0);
   buildLights(scene);
   buildRoom(scene);
 
@@ -201,7 +185,17 @@ export function createTableScene(canvas) {
 
   const SEAT_Y = -0.3; // sinks the avatar so its lower body reads as behind/below the table edge
 
-  // My own seat -- built once, rarely changes mid-game.
+  // My own seat -- built once, rarely changes mid-game. MY_SLOT sits at the near edge of
+  // the table, right where the camera is, facing away from it -- so a full avatar body
+  // placed here (this used to happen, in update() below) put the back of your own head a
+  // couple of units from the lens: at any camera distance close enough to make opponents
+  // read as actual characters (the whole point of the 2026-09-10 "bring the camera in"
+  // pass), your own head fills most of the frame, an unrecognizable smooth close-up blob --
+  // this, not the table's wood texture or lighting (both suspected and cleared first), was
+  // the real cause of the flat gold/black disc reported both before AND after that pass.
+  // mySlot.anchor is kept (empty) only so future code has a hook for it; the stool alone is
+  // enough for the near edge to read as "your seat" the way Liar's Bar's own view never
+  // shows your own body either.
   const mySlot = { anchor: new THREE.Group(), sig: null };
   mySlot.anchor.position.set(MY_SLOT.x, SEAT_Y, MY_SLOT.z);
   mySlot.anchor.rotation.y = MY_SLOT.ry;
@@ -225,6 +219,12 @@ export function createTableScene(canvas) {
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Without tone mapping, any lit pixel over 1.0 just clips to flat white/gold instead of
+  // rolling off -- that hard clipping is what turned the key light into a manhole-cover-like
+  // hotspot on the table. ACES rolls highlights off naturally, the same fix any physically-lit
+  // three.js scene needs once a light is bright enough to blow out a nearby surface.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
 
   function resize() {
     const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
@@ -262,13 +262,13 @@ export function createTableScene(canvas) {
   }
 
   // others: array of { id, avatar, alive } for every OTHER player, in seat order.
-  // myAvatar: the local player's own avatar config (or null).
+  // myAvatar: the local player's own avatar config -- accepted for API compatibility with
+  // callers, but deliberately never rendered as a body (see mySlot's own comment above for
+  // why: nothing sits between the camera and the table, so nobody's own head fills the
+  // frame). The empty stool stays, so the near edge of the table still reads as "your seat".
   // opts: { activePlayerId, reactingIds: Set<id> }
   function update(othersData, myAvatar, opts = {}) {
     ensureSlotCount(othersData.length);
-
-    const mySig = JSON.stringify(myAvatar || null);
-    if (mySig !== mySlot.sig) { setSeatAvatar(mySlot, myAvatar); mySlot.sig = mySig; }
 
     let activeAnchor = null;
     othersData.forEach((p, i) => {

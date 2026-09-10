@@ -609,21 +609,13 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   overflow: hidden;
   padding: 1rem clamp(1rem, 4vw, 3rem) 1.25rem;
   display: flex; flex-direction: column; gap: 0.5rem;
-  background:
-    linear-gradient(180deg, #241c38 0%, #3d2f5c 20%, #7a5a72 40%, #d68a5a 60%, #eab766 74%, var(--bg) 100%);
+  /* Liar's Bar has no modeled outdoor scene behind its table -- just a dim, moody room.
+     This used to be a bright sunset-over-castle-silhouettes gradient (left over from the
+     pre-3D flat table), which fought with the indoor bar-table scene it now sits behind.
+     A plain dark gradient matching the app's own indigo/plum tokens reads as "dim room",
+     not "wrong place", and gives the table stage (below) the space instead of scenery. */
+  background: radial-gradient(ellipse at 50% 15%, #241c38 0%, #1a1428 55%, #100c18 100%);
 }
-
-.scene-hill { position: absolute; left: -15%; width: 130%; border-radius: 50% 50% 0 0; pointer-events: none; }
-.scene-hill.h1 { height: 26vh; bottom: -6vh; background: #2a2015; opacity: 0.92; z-index: 1; }
-.scene-hill.h2 { height: 18vh; bottom: -4vh; background: #3a2c1a; opacity: 0.85; z-index: 0; left: -25%; width: 150%; }
-
-.scene-castle { position: absolute; bottom: 15vh; display: flex; align-items: flex-end; gap: 4px; opacity: 0.55; z-index: 1; pointer-events: none; }
-.scene-castle.left { left: 3%; transform: scale(0.85); }
-.scene-castle.right { right: 4%; transform: scale(1.05) scaleX(-1); }
-.scene-castle .tower { background: #1c140c; clip-path: polygon(0% 100%, 0% 28%, 50% 0%, 100% 28%, 100% 100%); }
-.scene-castle .tower.t1 { width: 22px; height: 46px; }
-.scene-castle .tower.t2 { width: 30px; height: 68px; }
-.scene-castle .tower.t3 { width: 20px; height: 38px; }
 
 .top-bar { position: relative; z-index: 5; display: flex; justify-content: space-between; align-items: center; }
 .icon-btn {
@@ -633,34 +625,42 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .icon-btn.small { width: 34px; height: 34px; font-size: 0.9rem; }
 .icon-btn:focus-visible { box-shadow: var(--focus-ring); }
 
-.table-wrap { position: relative; z-index: 3; flex: 1; display: flex; align-items: center; justify-content: center; padding: 0.5rem 0; min-height: 320px; }
+.table-wrap { position: relative; z-index: 3; flex: 1; display: flex; align-items: center; justify-content: center; padding: 0.35rem 0; min-height: 360px; }
 .table-ring {
-  position: relative;
-  width: min(480px, 78vw);
-  aspect-ratio: 1 / 1;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #342a1c, var(--bg) 72%);
-  border: 9px solid var(--gold);
-  /* A touch of directional lighting on top of the existing outer/inner shadows -- a soft
-     highlight from above and a deeper shadow underneath -- so the rim reads as a lit
-     physical object rather than a flat-colored ring. (box-shadow, not border-image: an
-     image border ignores border-radius and would turn this circle into a rectangle.) */
+  /* This used to be a small circle (max 480px) with a thick gold "porthole" border,
+     centered in a lot of empty page background -- that framing is what made the table
+     feel cramped and the rest of the screen feel wasted. Liar's Bar doesn't put its
+     table behind a picture frame: the table view just IS the screen. This is now a
+     large stage that fills the space between the top bar and the hand -- the WebGL
+     canvas is transparent (renderer alpha:true), so this div's own gradient is the
+     entire "room" background, no modeled floor/walls needed behind it. */
+  /* top/bottom + left/transform, not width:100%/height:100% -- .table-wrap's own height
+     comes from min-height on a flex item, not an explicit height, which several browsers
+     (Chromium included) treat as "indefinite" for a CHILD's percentage-height purposes --
+     the ring silently collapsed to its border width (6px) the first time this was tried.
+     Absolute positioning against .table-wrap's containing block doesn't have that
+     ambiguity, which is why every other layer in this ring (#table-canvas, .table-vignette,
+     .table-center) already uses this same inset/absolute idiom instead of percentages. */
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%; transform: translateX(-50%);
+  width: min(100%, 1100px);
+  border-radius: clamp(16px, 2.5vw, 32px);
+  background: radial-gradient(ellipse at 50% 32%, #342a1c, var(--bg) 78%);
+  border: 3px solid rgba(212,175,55,0.55);
   box-shadow:
-    0 0 0 4px #1a130c,
-    0 24px 50px rgba(0,0,0,0.55),
-    inset 0 0 50px rgba(0,0,0,0.6),
-    inset 0 7px 16px rgba(255,255,255,0.06),
-    inset 0 -10px 20px rgba(0,0,0,0.3);
+    0 24px 60px rgba(0,0,0,0.55),
+    inset 0 0 60px rgba(0,0,0,0.5),
+    inset 0 7px 16px rgba(255,255,255,0.05);
   transition: box-shadow 0.4s ease;
+  overflow: hidden;
 }
 #table-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  border-radius: 50%;
   display: block;
-  overflow: hidden;
   z-index: var(--z-scene-canvas);
   filter: saturate(1.1) contrast(1.06) brightness(1.03);
 }
@@ -671,15 +671,14 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .table-vignette {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
   pointer-events: none;
-  background: radial-gradient(circle, transparent 55%, rgba(10, 6, 4, 0.55) 100%);
+  background: radial-gradient(ellipse at 50% 40%, transparent 50%, rgba(10, 6, 4, 0.55) 100%);
   z-index: var(--z-scene-vignette);
 }
 .table-ring.my-turn { animation: ringGlow 2.4s ease-in-out infinite; }
 @keyframes ringGlow {
-  0%, 100% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), inset 0 7px 16px rgba(255,255,255,0.06), inset 0 -10px 20px rgba(0,0,0,0.3), 0 0 34px 4px rgba(212,175,55,0.35); }
-  50% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), inset 0 7px 16px rgba(255,255,255,0.06), inset 0 -10px 20px rgba(0,0,0,0.3), 0 0 60px 12px rgba(212,175,55,0.65); }
+  0%, 100% { box-shadow: 0 24px 60px rgba(0,0,0,0.55), inset 0 0 60px rgba(0,0,0,0.5), inset 0 7px 16px rgba(255,255,255,0.05); }
+  50% { box-shadow: 0 24px 60px rgba(0,0,0,0.55), inset 0 0 60px rgba(0,0,0,0.5), inset 0 7px 16px rgba(255,255,255,0.05), 0 0 34px 6px rgba(212,175,55,0.4); }
 }
 .seats-layer { position: absolute; inset: 0; z-index: var(--z-scene-labels); pointer-events: none; }
 
@@ -961,7 +960,6 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 @keyframes slowSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 @media (max-width: 640px) {
-  .table-ring { width: min(380px, 84vw); }
   .seat { width: 72px; }
   .seat-avatar { width: 42px; height: 42px; font-size: 1.05rem; }
   .seat-plate { min-width: 68px; padding: 0.25rem 0.45rem; }
@@ -979,12 +977,13 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   .table-scene { padding: 0.5rem 0.6rem 0.6rem; gap: 0.25rem; }
   .top-bar { margin-bottom: -0.2rem; }
   .table-wrap { min-height: 170px; padding: 0.1rem 0; }
-  .table-ring { width: min(190px, 66vw); }
   .seat { width: 54px; }
   .seat-plate { padding: 0.18rem 0.35rem; min-width: 50px; }
   .seat-name { font-size: 0.58rem; max-width: 58px; }
   .seat-tickets, .seat-hearts { font-size: 0.56rem; }
-  .pile { top: 90%; }
+  /* 90% clipped the "Bank"/"Deck" labels against the ring's own bottom edge once the ring
+     grew to fill .table-wrap's height (was tuned for the old fixed-size small ring). */
+  .pile { top: 84%; }
   .pile-coins, .pile-cards { transform: scale(0.72); }
   .pile-label { font-size: 0.55rem; }
   /* The table-center plaque needs a much bigger share of a ring this small, or a
