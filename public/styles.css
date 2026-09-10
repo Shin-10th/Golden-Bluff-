@@ -622,7 +622,13 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   0%, 100% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), 0 0 34px 4px rgba(212,175,55,0.35); }
   50% { box-shadow: 0 0 0 4px #1a130c, 0 24px 50px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.6), 0 0 60px 12px rgba(212,175,55,0.65); }
 }
-.seats-layer { position: absolute; inset: 0; z-index: 2; }
+/* Purely a positioning container for the .seat labels -- never itself interactive -- but
+   since it fully covers the table ring (inset: 0) and sits above #table-center/piles in the
+   stacking order, its own transparent box was silently swallowing every click meant for the
+   Challenge/Pass/counter-claim buttons underneath it. pointer-events: none lets clicks pass
+   through to whatever is actually beneath; individual .seat children can still opt back into
+   pointer-events: auto if a future feature needs a seat itself to be clickable. */
+.seats-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 
 /* Bank (ticket supply) and Deck (character supply) piles — fixed props sitting
    in the ring's bottom arc, which is otherwise empty (seats only occupy the
