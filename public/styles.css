@@ -753,7 +753,9 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 }
 .seat-plate-row { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 0.1rem; }
 .seat-tickets { font-size: 0.74rem; color: var(--gold-bright); position: relative; }
-.seat-hearts { font-size: 0.72rem; letter-spacing: -0.05em; }
+.seat-hearts { display: inline-flex; align-items: center; gap: 2px; }
+.life-pip { width: 0.56em; height: 0.78em; color: #d4453f; flex: none; }
+.life-pip svg { width: 100%; height: 100%; display: block; }
 .seat-away { opacity: 0.8; }
 
 /* Active turn: the plate itself glows gold, since the avatar circle may not be visible. */
@@ -804,6 +806,47 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
 .tc-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center; }
 .tc-emblem { width: 46px; height: 46px; opacity: 0.8; color: var(--gold); }
 .tc-emblem svg { width: 100%; height: 100%; }
+
+/* Compact top-left claim callout -- a second, smaller echo of the live claim next to
+   the big centered status card, closer to where Liar's Bar itself surfaces the current
+   move. Purely additive: it never carries the CHALLENGE!/Pass buttons, so it can't be
+   mistaken for an interactive control. */
+.claim-badge {
+  position: absolute; top: 12px; left: 14px; z-index: var(--z-scene-labels);
+  display: flex; align-items: center; gap: 0.45rem;
+  background: rgba(18,13,9,0.82); backdrop-filter: blur(2px);
+  border: 1.5px solid var(--char-a, var(--gold)); border-radius: 12px;
+  padding: 0.3rem 0.6rem 0.3rem 0.4rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 12px 0 var(--char-glow, transparent);
+  transition: opacity 0.2s ease;
+}
+.claim-badge.hidden { display: none; }
+.claim-badge-icon { width: 1.7em; height: 1.7em; flex: none; color: var(--char-a, var(--gold)); }
+.claim-badge-icon svg { width: 100%; height: 100%; display: block; }
+.claim-badge-text { font-size: 0.68rem; line-height: 1.25; color: var(--text); text-align: left; white-space: nowrap; }
+.claim-badge-text b { color: var(--char-a, var(--gold-bright)); font-family: 'Cinzel', serif; }
+
+/* Decorative turn-pacing bar -- not an enforced countdown (there's no server-side turn
+   clock), just a visual cue that time is passing while it's your move, echoed in 3D for
+   opponents by the sweeping ring under their seat (see scene3d.js's turnRing). Sits
+   flush under the top edge of the ring; only ever animates while .table-ring.my-turn is
+   set, and that class only toggles on a genuine turn change (see renderGame), so the
+   sweep isn't restarted by every unrelated state update. */
+.turn-bar-track {
+  position: absolute; top: 0; left: 8%; right: 8%; height: 3px; z-index: var(--z-scene-labels);
+  background: rgba(0,0,0,0.3); border-radius: 0 0 3px 3px; overflow: hidden; opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.table-ring.my-turn .turn-bar-track { opacity: 1; }
+.turn-bar-fill {
+  height: 100%; width: 100%; transform-origin: left center;
+  background: linear-gradient(90deg, var(--gold), var(--gold-bright));
+}
+.table-ring.my-turn .turn-bar-fill { animation: turnBarSweep 9s linear infinite; }
+@keyframes turnBarSweep {
+  0% { transform: scaleX(1); }
+  100% { transform: scaleX(0); }
+}
 
 .bottom-zone { position: relative; z-index: 4; display: flex; flex-direction: column; align-items: center; gap: 0.6rem; }
 .my-stats {
@@ -1058,10 +1101,12 @@ h1, h2, h3 { color: var(--gold-bright); margin-top: 0; }
   .table-ring.my-turn,
   .seat.is-turn .seat-avatar,
   .player-card.is-turn,
+  .turn-bar-fill,
   .winner-banner h2,
   .winner-banner .trophy {
     animation: none !important;
   }
+  .turn-bar-track { opacity: 0 !important; }
   .char-card.clickable:hover { transform: none; }
   .char-card::after { animation: none; }
 }

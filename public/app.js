@@ -870,6 +870,7 @@ function renderGame() {
   renderSeats(pub);
   renderMyStats(pub);
   renderTableCenter(pub);
+  renderClaimBadge(pub);
   renderChipBar(pub);
   renderMyHand();
   renderLog(pub);
@@ -969,7 +970,7 @@ function renderSeats(pub) {
         <div class="seat-name">${p.name}${!p.connected ? ' <span class="seat-away">💤</span>' : ''}</div>
         <div class="seat-plate-row">
           <span class="seat-tickets ${pulseClass}">🎟️ ${p.tickets}${deltaHtml}</span>
-          <span class="seat-hearts">${p.alive ? '❤️'.repeat(p.cardCount) : ''}</span>
+          <span class="seat-hearts">${p.alive ? lifeIconHTML(p.cardCount) : ''}</span>
         </div>
       </div>
     `;
@@ -1009,6 +1010,26 @@ function emblemEl() {
   div.className = 'tc-emblem';
   div.innerHTML = EMBLEM_SVG;
   return div;
+}
+
+// A compact top-left callout naming the live claim and its Character icon -- echoing
+// where Liar's Bar itself surfaces the current move, rather than only the big centered
+// status card (which stays, since it's what actually carries the CHALLENGE!/Pass
+// buttons). Shown only while there's an active claim genuinely up for challenge; hidden
+// for every other phase so it never competes with the discard/seer/trickster prompts.
+function renderClaimBadge(pub) {
+  const badge = el('claim-badge');
+  const c = pub.pendingClaim;
+  if (pub.phase !== 'challengeWindow' || !c) {
+    badge.className = 'claim-badge hidden';
+    return;
+  }
+  const meta = CHARACTERS[c.character];
+  badge.className = `claim-badge ${charClass(c.character)}`;
+  badge.innerHTML = `
+    <span class="claim-badge-icon">${charIconHTML(c.character)}</span>
+    <span class="claim-badge-text"><b>${nameOf(pub, c.claimantId)}</b><br>${meta.name}</span>
+  `;
 }
 
 // The circular table centerpiece: whose turn/claim/reaction is live, and (when few enough) the react buttons.

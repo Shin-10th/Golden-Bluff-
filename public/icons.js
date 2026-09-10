@@ -47,6 +47,23 @@ function charIconHTML(key) {
   return CHAR_ICON_SVG[key] || '';
 }
 
+// A themed stand-in for the plain heart emoji the "lives remaining" indicator used to
+// show next to each seat: a small Character-card silhouette (echoing the card-back
+// emblem used on the table and on the first-person hand of cards) instead of a generic
+// red heart, so losing a Character reads as "you're down to your last card" rather than
+// "you're down to your last heart" -- the actual game mechanic.
+const LIFE_ICON_SVG = `<svg viewBox="0 0 40 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1.5" y="1.5" width="37" height="53" rx="6" fill="currentColor"/>
+  <rect x="7" y="7" width="26" height="42" rx="3" fill="var(--panel-2, #16110c)"/>
+  <path d="M20,17 L23.5,25 L20,33 L16.5,25 Z" fill="currentColor"/>
+</svg>`;
+
+function lifeIconHTML(count) {
+  let out = '';
+  for (let i = 0; i < count; i++) out += `<span class="life-pip">${LIFE_ICON_SVG}</span>`;
+  return out;
+}
+
 // Decorative emblem shown at the table center when there is no active claim to react to.
 const EMBLEM_SVG = `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect x="6" y="20" width="52" height="28" rx="6" fill="currentColor"/>
