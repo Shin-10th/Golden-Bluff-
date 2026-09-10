@@ -76,7 +76,7 @@ function makeFloorTexture(baseColorHex) {
 // ---------- Room + table geometry, built once ----------
 function buildRoom(scene) {
   const floorColor = cssColor('--panel-2', '#2b2440');
-  const wallColor = cssColor('--bg', '#151022');
+  const wallColor = new THREE.Color('#3d2a1c'); // warm tavern-wall brown, not the app's near-black --bg
   const trimColor = cssColor('--gold', '#d4af37');
 
   const floor = new THREE.Mesh(
@@ -89,8 +89,11 @@ function buildRoom(scene) {
   scene.add(floor);
 
   const wall = new THREE.Mesh(
-    new THREE.CylinderGeometry(9, 9, 7, 32, 1, true, Math.PI * 0.15, Math.PI * 1.7),
-    new THREE.MeshStandardMaterial({ color: wallColor, roughness: 1, side: THREE.BackSide })
+    new THREE.CylinderGeometry(9, 9, 20, 32, 1, true, Math.PI * 0.15, Math.PI * 1.7),
+    new THREE.MeshStandardMaterial({
+      color: wallColor, roughness: 0.92, side: THREE.BackSide,
+      emissive: new THREE.Color('#2a160a'), emissiveIntensity: 0.35,
+    })
   );
   wall.position.y = 1.6;
   scene.add(wall);
@@ -187,9 +190,9 @@ function arcPositions(n, centerDeg, R, spanDeg) {
 
 export function createTableScene(canvas) {
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 40);
-  camera.position.set(0, 1.7, 5.6);
-  camera.lookAt(0, -0.5, 0);
+  const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 40);
+  camera.position.set(0, 3.3, 6.4);
+  camera.lookAt(0, -1.0, 0);
   buildLights(scene);
   buildRoom(scene);
 
@@ -293,7 +296,7 @@ export function createTableScene(canvas) {
     ids.forEach((id) => {
       const slot = others.find((s) => s.id === id);
       if (!slot) return;
-      const v = new THREE.Vector3(slot.anchor.position.x, slot.anchor.position.y + 0.85, slot.anchor.position.z).project(camera);
+      const v = new THREE.Vector3(slot.anchor.position.x, slot.anchor.position.y + 1.05, slot.anchor.position.z).project(camera);
       out[id] = { x: (v.x * 0.5 + 0.5) * w, y: (1 - (v.y * 0.5 + 0.5)) * h };
     });
     return out;
