@@ -21,6 +21,13 @@ function toonMat(color) {
   return new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
 }
 
+// A shade darker than the given body color, for the simple "clothing" trim added below
+// (collar/belt) -- ties each accent back to the character's own color instead of a
+// fixed tone that would look identical on every avatar.
+function darken(color, factor) {
+  return color.clone().multiplyScalar(factor);
+}
+
 // Wraps a mesh with a slightly-larger, backface-only dark shell -- the classic
 // "backface expansion" outline trick. Adds the outline as a sibling in the same
 // parent group so it doesn't compound the mesh's own transform.
@@ -204,6 +211,29 @@ export function buildAvatarGroup(config, charOverride) {
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.32, 6, 14), bodyMat);
   torso.position.y = -0.28;
   withOutline(torso, root);
+
+  // Simple "clothing" read (a stretch-goal push at Character fidelity, per Aki's own
+  // priority order): a collar trim and a belt, both just rings hugging the torso
+  // capsule's own surface, so a single flat-colored body doesn't look like a bare blob.
+  // Not an attempt at real garment geometry (no cloth sim, no separate mesh silhouette)
+  // -- procedural primitives only, same as everything else here.
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.39, 0.045, 8, 20), toonMat(darken(bodyColor, 0.65)));
+  collar.rotation.x = Math.PI / 2;
+  collar.position.y = 0.05;
+  withOutline(collar, root, 1.15);
+
+  const belt = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.05, 8, 20), toonMat(new THREE.Color('#2a1c12')));
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = -0.42;
+  withOutline(belt, root, 1.15);
+
+  // Boots -- a short dark cylinder capping each leg, instead of the bare body-colored
+  // capsule running straight into the floor.
+  [-0.22, 0.22].forEach((x) => {
+    const boot = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.15, 0.16, 12), toonMat(new THREE.Color('#2a1c12')));
+    boot.position.set(x, -1.0, 0.03);
+    withOutline(boot, root, 1.12);
+  });
 
   // Arms
   [-0.52, 0.52].forEach((x) => {
